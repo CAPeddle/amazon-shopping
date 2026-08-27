@@ -16,7 +16,10 @@ from pathlib import Path
 import pytest
 from playwright.async_api import Browser, Page, async_playwright
 
+from amazon_nl_mcp.amazon.client import AmazonClient
 from amazon_nl_mcp.config import Settings
+
+from .fake_amazon import FakeAmazon, StubBrowserSession, default_fake
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -59,7 +62,7 @@ async def browser() -> AsyncIterator[Browser]:
 
 @pytest.fixture
 async def page(browser: Browser) -> AsyncIterator[Page]:
-    context = await browser.new_context(locale="nl-NL")
+    context = await browser.new_context(locale="nl-NL", service_workers="block")
     opened = await context.new_page()
     try:
         yield opened
@@ -79,3 +82,26 @@ def fixture_page(page: Page) -> PageLoader:
         return page
 
     return _load
+
+
+@pytest.fixture
+async def fake_amazon() -> FakeAmazon:
+    """A fresh routing table and cart state per test."""
+    return default_fake()
+
+
+@pytest.fixture
+async def amazon_client(
+    browser: Browser, fake_amazon: FakeAmazon, settings: Settings
+) -> AsyncIterator[AmazonClient]:
+    """The real :class:`AmazonClient`, pointed at the fake storefront."""
+    context = await browser.new_context(
+        locale="nl-NL",
+        timezone_id="Europe/Amsterdam",
+        service_workers="block",  # a service worker would bypass page.route
+    )
+    session = StubBrowserSession(context, fake_amazon, settings)
+    try:
+        yield AmazonClient(session, settings)  # type: ignore[arg-type]
+    finally:
+        await context.close()

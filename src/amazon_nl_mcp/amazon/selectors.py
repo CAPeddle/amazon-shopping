@@ -30,16 +30,21 @@ CAPTCHA_MARKERS: Final[list[str]] = [
     "#cvf-page-content",  # 'Enter the characters you see' / OTP challenge
 ]
 
+#: Phrases that mean "prove you are human", and nothing else.
+#:
+#: Deliberately narrow. Amazon's 404 page and its bot wall share the wording
+#: "Sorry, er is iets misgegaan", so matching on that would let a mistyped ASIN
+#: trip the circuit breaker and take the whole service offline for the cooldown.
+#: Anything ambiguous is left to the structural markers above.
 CAPTCHA_TEXT_MARKERS: Final[tuple[str, ...]] = (
     "voer de tekens in die je hieronder ziet",
     "voer de tekens in die u hieronder ziet",
     "voer de karakters in die u hieronder ziet",
+    "type de tekens die je hieronder ziet",
     "enter the characters you see below",
-    "sorry, something went wrong on our end",
-    "er is iets misgegaan",
     "geef ons de kans het goed te maken",
-    "geen robot",
-    "not a robot",
+    "om verder te gaan, bevestig dat je geen robot bent",
+    "to continue, please confirm that you are not a robot",
 )
 
 # 'Continue shopping' wall that Amazon serves instead of a page under load.
@@ -271,9 +276,12 @@ PDP_VARIANT_ITEMS: Final[list[str]] = [
 
 PDP_DOG_PAGE_MARKERS: Final[tuple[str, ...]] = (
     "sorry! er is iets misgegaan",
+    "er is iets misgegaan",
     "de pagina die je zoekt",
+    "deze pagina is niet gevonden",
     "looking for something?",
     "we couldn't find that page",
+    "page not found",
 )
 
 # -- post-add interstitials -------------------------------------------------

@@ -60,8 +60,11 @@ def configure_logging(level: str = "INFO", fmt: str = "console") -> None:
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.getLevelName(level.upper())),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
-        cache_logger_on_first_use=True,
+        # Emit through stdlib logging rather than straight to a captured stream:
+        # the handler resolves its stream per record, so reconfiguring the root
+        # logger (systemd, pytest) actually takes effect.
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=False,
     )
 
 
