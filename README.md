@@ -88,7 +88,7 @@ claude mcp add --transport http amazon-nl http://127.0.0.1:8765/mcp \
   --header "Authorization: Bearer $(cat ~/.config/amazon-nl-mcp/auth_token)"
 ```
 
-**Claude Desktop / any client that reads `.mcp.json`**
+**`.mcp.json`** (Claude Code project config, or `~/.claude.json`)
 
 ```json
 {
@@ -96,11 +96,36 @@ claude mcp add --transport http amazon-nl http://127.0.0.1:8765/mcp \
     "amazon-nl": {
       "type": "http",
       "url": "http://127.0.0.1:8765/mcp",
-      "headers": { "Authorization": "Bearer PASTE_TOKEN_HERE" }
+      "headers": { "Authorization": "Bearer ${AMAZON_MCP_TOKEN}" }
     }
   }
 }
 ```
+
+`type` is required — a `url` entry without it is read as stdio and fails. Keep the token in the
+environment rather than in the file; `${VAR}` is expanded on load.
+
+**Claude Desktop** cannot reach a localhost HTTP server: its stdio config has no HTTP transport,
+and custom connectors dial out from Anthropic's cloud. Bridge it with
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+
+```json
+{
+  "mcpServers": {
+    "amazon-nl": {
+      "command": "npx",
+      "args": [
+        "mcp-remote", "http://127.0.0.1:8765/mcp",
+        "--transport", "http-only",
+        "--header-file", "/home/you/.config/amazon-nl-mcp/headers.txt"
+      ]
+    }
+  }
+}
+```
+
+where `headers.txt` is one `Authorization: Bearer <token>` line, mode 600. A header file rather
+than `--header` keeps the token out of the process argv, where any local user can read it.
 
 **Anything else on the box** — it is an ordinary HTTP service:
 
@@ -175,7 +200,7 @@ The ones that matter most:
 ```bash
 uv sync
 uv run playwright install chromium
-uv run pytest              # 116 tests, no network, no amazon.nl
+uv run pytest              # 123 tests, no network, no amazon.nl
 uv run ruff check src tests && uv run ruff format --check src tests
 uv run mypy src tests
 ```
