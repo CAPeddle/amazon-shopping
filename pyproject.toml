@@ -21,7 +21,6 @@ amazon-nl-mcp = "amazon_nl_mcp.__main__:main"
 [dependency-groups]
 dev = [
     "pytest>=8.3",
-    "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
     "anyio>=4.6",
     "httpx>=0.28",
@@ -59,7 +58,11 @@ module = ["tests.*"]
 disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
+# anyio's plugin, not pytest-asyncio: pytest-asyncio 1.4 runs async-generator
+# fixture setup and teardown in different tasks, which breaks any fixture that
+# yields from an anyio context manager -- mcp's Client among them -- and needs
+# both loop-scope options set before a session-scoped browser even works.
+anyio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "live: hits the real amazon.nl with the real browser profile (deselected by default)",

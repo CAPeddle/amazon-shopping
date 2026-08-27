@@ -97,7 +97,7 @@ def parse_price(display: str | None) -> Money | None:
         return None
     raw = match.group(1)
     # Dutch formatting: '.' and NBSP group thousands, ',' is the decimal mark.
-    normalised = re.sub("[\s\u00a0\u202f]", "", raw)
+    normalised = re.sub(r"[\s\u00a0\u202f]", "", raw)
     if "," in normalised:
         normalised = normalised.replace(".", "").replace(",", ".")
     elif normalised.count(".") > 1:
@@ -241,10 +241,14 @@ async def extract_search_rows(page: Page, base_url: str, limit: int) -> list[Pro
     """Extract up to ``limit`` products from a search results page."""
     products: list[ProductSummary] = []
     seen: set[str] = set()
+    # Every candidate selector is tried, not just the first that matches: Amazon
+    # serves mixed layouts on one page often enough that stopping early silently
+    # drops rows. The ASIN set keeps the overlap from double-counting.
     for selector in S.SEARCH_RESULT_ROW:
         rows = page.locator(selector)
-        count = await rows.count()
-        if count == 0:
+        try:
+            count = await rows.count()
+        except PlaywrightError:
             continue
         for index in range(count):
             if len(products) >= limit:
@@ -254,8 +258,6 @@ async def extract_search_rows(page: Page, base_url: str, limit: int) -> list[Pro
                 continue
             seen.add(product.asin)
             products.append(product)
-        if products:
-            return products
     return products
 
 
@@ -264,7 +266,6 @@ async def extract_variants(page: Page) -> list[ProductVariant]:
     variants: list[ProductVariant] = []
     seen: set[str] = set()
     for selector in S.PDP_VARIANT_ITEMS:
-        dimension = _dimension_from_selector(selector)
         items = page.locator(selector)
         count = await items.count()
         for index in range(min(count, 40)):
@@ -282,20 +283,37 @@ async def extract_variants(page: Page) -> list[ProductVariant]:
             if not is_valid_asin(asin) or asin in seen:
                 continue
             label = _clean(await item.inner_text()) or asin
-            variants.append(ProductVariant(asin=asin, label=label[:120], dimension=dimension))
+            variants.append(
+                ProductVariant(asin=asin, label=label[:120], dimension=await _dimension_of(item, selector))
+            )
             seen.add(asin)
         if variants:
             break
     return variants
 
 
-def _dimension_from_selector(selector: str) -> str | None:
-    """Name the variation axis when the selector itself reveals it."""
-    if "size_name" in selector:
-        return "size"
-    if "color_name" in selector:
-        return "color"
-    return None
+_VARIATION_ID = re.compile(r"variation_(.+?)_name", re.IGNORECASE)
+
+
+async def _dimension_of(item: Locator, selector: str) -> str | None:
+    """Name the variation axis this child belongs to.
+
+    Amazon wraps each axis in a container whose id is ``variation_<axis>_name``,
+    so the container is asked first; the selector that matched is the fallback
+    for the shapes that carry the axis in the selector itself.
+    """
+    try:
+        container_id = await item.evaluate(
+            "el => el.closest('[id^=\"variation_\"]')?.id ?? null", timeout=1_500
+        )
+    except PlaywrightError:
+        container_id = None
+    if isinstance(container_id, str):
+        match = _VARIATION_ID.search(container_id)
+        if match:
+            return match.group(1).lower()
+    match = _VARIATION_ID.search(selector)
+    return match.group(1).lower() if match else None
 
 
 async def extract_cart_line(line: Locator, base_url: str) -> CartLine | None:

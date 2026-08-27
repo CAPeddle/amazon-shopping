@@ -138,6 +138,10 @@ class BrowserSession:
             profile.chmod(0o700)
         _clear_stale_singleton_locks(profile)
 
+        args = list(LAUNCH_ARGS)
+        if self._settings.browser_no_sandbox:
+            args.append("--no-sandbox")
+
         log.info("browser_starting", profile_dir=str(profile), headless=self._headless)
         self._playwright = await async_playwright().start()
         try:
@@ -151,7 +155,7 @@ class BrowserSession:
                         if self._settings.browser_executable_path
                         else None
                     ),
-                    args=LAUNCH_ARGS,
+                    args=args,
                     locale=self._settings.locale,
                     timezone_id=self._settings.timezone,
                     user_agent=self._settings.user_agent or DEFAULT_USER_AGENT,

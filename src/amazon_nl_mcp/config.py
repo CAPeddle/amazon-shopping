@@ -76,6 +76,13 @@ class Settings(BaseSettings):
         default=None,
         description="Chromium channel to launch, e.g. 'chrome'. None uses Playwright's bundled build.",
     )
+    browser_no_sandbox: bool = Field(
+        default=False,
+        description=(
+            "Pass --no-sandbox to Chromium. Needed when the service runs as root or in a "
+            "container without the required kernel namespaces; leave off for a normal user."
+        ),
+    )
     browser_executable_path: Path | None = Field(
         default=None,
         description=(

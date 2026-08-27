@@ -1,0 +1,70 @@
+<!doctype html>
+<!--
+  Trimmed capture of https://www.amazon.nl/s?k=usb+c+kabel — enough of the real
+  structure to exercise the selector chains, including rows that must be
+  rejected (an ad slot with an empty data-asin) and rows that only match the
+  fallback selectors.
+-->
+<html lang="nl"><body>
+<div id="nav-belt">
+  <a href="/gp/cart/view.html?ref_=nav_cart" aria-label="3 items in winkelwagen" id="nav-cart">
+    <div id="nav-cart-count-container"><span id="nav-cart-count" class="nav-cart-count nav-cart-3">3</span></div>
+  </a>
+  <a href="/gp/css/homepage.html" id="nav-link-accountList">
+    <div class="nav-line-1-container"><span id="nav-link-accountList-nav-line-1" class="nav-line-1">Hallo, Chris</span></div>
+  </a>
+</div>
+
+<div class="s-main-slot s-result-list s-search-results">
+
+  <!-- ad slot: empty ASIN, must be skipped entirely -->
+  <div data-component-type="s-search-result" data-asin="" data-index="0" class="s-result-item AdHolder">
+    <h2><span>Banner</span></h2>
+  </div>
+
+  <!-- primary selectors throughout -->
+  <div data-component-type="s-search-result" data-asin="B0CX23V2ZK" data-index="1" class="s-result-item">
+    <div data-cy="title-recipe">
+      <h2><a class="a-link-normal" href="/Anker-USB-C-kabel/dp/B0CX23V2ZK/ref=sr_1_1"><span>Anker USB-C naar USB-C kabel 2 m, 100 W</span></a></h2>
+    </div>
+    <div data-cy="price-recipe">
+      <span class="a-price" data-a-color="base"><span class="a-offscreen">€ 18,99</span>
+        <span aria-hidden="true"><span class="a-price-symbol">€</span><span class="a-price-whole">18<span class="a-price-decimal">,</span></span><span class="a-price-fraction">99</span></span>
+      </span>
+      <span class="a-price a-text-price" data-a-strike="true"><span class="a-offscreen">€ 24,99</span></span>
+    </div>
+    <div data-cy="reviews-block">
+      <i class="a-icon a-icon-star-small a-star-small-4-5"><span class="a-icon-alt">4,4 van de 5 sterren</span></i>
+      <a href="/product-reviews/B0CX23V2ZK#customerReviews"><span class="a-size-base">1.284</span></a>
+    </div>
+    <div data-cy="delivery-recipe"><i class="a-icon a-icon-prime" aria-label="Prime"></i></div>
+    <img class="s-image" src="https://m.media-amazon.com/images/I/anker.jpg" alt="Anker kabel">
+  </div>
+
+  <!-- sponsored: AdHolder class on the container, sspa link -->
+  <div data-component-type="s-search-result" data-asin="B09SPONSOR" data-index="2" class="s-result-item AdHolder">
+    <div data-cy="title-recipe">
+      <h2><a class="a-link-normal" href="/sspa/click?url=%2Fdp%2FB09SPONSOR"><span>Gesponsorde USB-C kabel 1 m</span></a></h2>
+    </div>
+    <span class="puis-sponsored-label-text">Gesponsord</span>
+    <div data-cy="price-recipe"><span class="a-price" data-a-color="base"><span class="a-offscreen">€ 9,99</span></span></div>
+    <img class="s-image" src="https://m.media-amazon.com/images/I/sponsored.jpg">
+  </div>
+
+  <!-- fallback selectors only: no data-cy wrappers, price via whole/fraction -->
+  <div class="s-result-item" data-asin="B07LEGACY1" data-index="3" role="listitem">
+    <h2><a class="a-link-normal s-no-outline" href="/dp/B07LEGACY1"><span class="a-text-normal">Ugreen USB-C kabel 1 m zwart</span></a></h2>
+    <span class="a-price"><span aria-hidden="true"><span class="a-price-whole">1.299<span class="a-price-decimal">,</span></span><span class="a-price-fraction">00</span></span></span>
+    <i class="a-icon a-star-4"><span class="a-icon-alt">4,0 van de 5 sterren</span></i>
+    <img class="s-image" src="https://m.media-amazon.com/images/I/ugreen.jpg">
+  </div>
+
+  <!-- no price at all: must still parse, price stays None -->
+  <div data-component-type="s-search-result" data-asin="B08NOPRIC1" data-index="4" class="s-result-item">
+    <div data-cy="title-recipe"><h2><a class="a-link-normal" href="/dp/B08NOPRIC1"><span>Onbekende kabel</span></a></h2></div>
+    <span class="a-color-price">Momenteel niet verkrijgbaar</span>
+  </div>
+</div>
+
+<span class="s-pagination-item s-pagination-next"><a class="s-pagination-next" href="/s?k=usb+c+kabel&page=2">Volgende</a></span>
+</body></html>
