@@ -290,8 +290,6 @@ async def extract_variants(page: Page) -> list[ProductVariant]:
                 ProductVariant(asin=asin, label=label[:120], dimension=await _dimension_of(item, selector))
             )
             seen.add(asin)
-        if variants:
-            break
     return variants
 
 

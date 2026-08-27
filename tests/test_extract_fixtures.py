@@ -178,3 +178,25 @@ class TestSessionSignals:
         assert await X.exists(page, S.CAPTCHA_MARKERS) is True
         text = await X.page_text_lower(page)
         assert any(marker in text for marker in S.CAPTCHA_TEXT_MARKERS)
+
+    async def test_a_two_axis_twister_keeps_both_axes(self, fixture_page: PageLoader) -> None:
+        """Stopping at the first matching selector would drop a whole axis."""
+        page = await fixture_page("product_variant_two_axes.html")
+        variants = await X.extract_variants(page)
+
+        assert {v.asin for v in variants} == {"B0SIZE0036", "B0SIZE0038", "B0COLBLUE1", "B0COLBLAK1"}
+        by_dimension: dict[str | None, set[str]] = {}
+        for variant in variants:
+            by_dimension.setdefault(variant.dimension, set()).add(variant.asin)
+        assert by_dimension["size"] == {"B0SIZE0036", "B0SIZE0038"}
+        assert by_dimension["color"] == {"B0COLBLUE1", "B0COLBLAK1"}
+
+    async def test_axes_reachable_only_by_different_selectors_are_all_kept(
+        self, fixture_page: PageLoader
+    ) -> None:
+        """One axis carries data-asin, the other only data-dp-url."""
+        page = await fixture_page("product_variant_split_axes.html")
+        variants = await X.extract_variants(page)
+
+        assert {v.asin for v in variants} == {"B0SIZE0042", "B0COLBRWN1", "B0COLGREY1"}
+        assert {v.dimension for v in variants} == {"size", "color"}

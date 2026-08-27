@@ -210,7 +210,7 @@ The ones that matter most:
 ```bash
 uv sync
 uv run playwright install chromium
-uv run pytest              # 140 tests, no network, no amazon.nl
+uv run pytest              # 142 tests, no network, no amazon.nl
 uv run ruff check src tests && uv run ruff format --check src tests
 uv run mypy src tests
 ```
