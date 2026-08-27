@@ -1,0 +1,81 @@
+# systemd *user* service for amazon-nl-mcp.
+#
+#   install -Dm644 deploy/amazon-nl-mcp.service ~/.config/systemd/user/amazon-nl-mcp.service
+#   loginctl enable-linger "$USER"          # keep it running after you log out
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now amazon-nl-mcp.service
+#
+# A user unit, not a system one, because the service owns a browser profile that
+# is logged in to a personal Amazon account: it belongs to that person's session
+# and nothing else on the box should be able to read it.
+
+[Unit]
+Description=amazon.nl MCP server (holds a logged-in Chromium profile)
+Documentation=https://github.com/CAPeddle/amazon-shopping
+After=default.target network-online.target
+# A crash loop must not wedge the unit permanently on a personal machine.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/amazon-shopping
+
+# A non-login user manager has almost nothing on PATH; uv has to be spelled out.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONFAULTHANDLER=1
+Environment=PLAYWRIGHT_BROWSERS_PATH=%h/.cache/ms-playwright
+Environment=AMAZON_MCP_LOG_FORMAT=json
+Environment=AMAZON_MCP_PROFILE_DIR=%S/amazon-nl-mcp/profile
+# Non-secret tunables. The bearer token deliberately does NOT live here — see
+# LoadCredential below; anything in Environment= is printed by `systemctl show`.
+EnvironmentFile=-%h/.config/amazon-nl-mcp/env
+
+# %S resolves to ~/.local/state for a user unit; recreated at this mode on every start.
+StateDirectory=amazon-nl-mcp
+StateDirectoryMode=0700
+RuntimeDirectory=amazon-nl-mcp
+RuntimeDirectoryMode=0700
+# Everything Chromium writes into the profile lands 0600/0700.
+UMask=0077
+
+# The token arrives as a 0400 file on tmpfs at $CREDENTIALS_DIRECTORY/auth_token,
+# which config.py reads in preference to the environment.
+LoadCredential=auth_token:%h/.config/amazon-nl-mcp/auth_token
+
+# A hard-killed Chromium leaves these behind and the next launch refuses the profile.
+ExecStartPre=-/bin/rm -f %S/amazon-nl-mcp/profile/SingletonLock %S/amazon-nl-mcp/profile/SingletonCookie %S/amazon-nl-mcp/profile/SingletonSocket
+ExecStart=%h/.local/bin/uv run --frozen --no-dev amazon-nl-mcp serve
+
+Restart=always
+RestartSec=5
+# The default KillMode=control-group is what reaps the whole Chromium
+# browser/renderer/zygote tree. Do not set KillMode=process.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+FinalKillSignal=SIGKILL
+# A renderer being OOM-killed must not take the service down with it.
+OOMPolicy=continue
+
+# Resource limits. These only bite if the memory controller is delegated to
+# user@.service — see docs/runbook.md; without delegation they are silently ignored.
+MemoryHigh=2G
+MemoryMax=3G
+MemorySwapMax=0
+TasksMax=512
+
+# The only sandboxing that actually applies to a *user* unit. ProtectHome=,
+# PrivateUsers= and RestrictNamespaces= are documented no-ops here, and
+# RestrictNamespaces would break Chromium's own sandbox if it did apply.
+NoNewPrivileges=yes
+
+SyslogIdentifier=amazon-nl-mcp
+StandardOutput=journal
+StandardError=journal
+# One JSON object per log line; journald must not drop bursts of them.
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
+
+[Install]
+WantedBy=default.target

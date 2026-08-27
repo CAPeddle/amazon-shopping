@@ -8,6 +8,7 @@ order.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -56,6 +57,14 @@ class Settings(BaseSettings):
         description=(
             "Static bearer token every caller must present as 'Authorization: Bearer <token>'. "
             "Required unless auth_disabled is set."
+        ),
+    )
+    auth_token_file: Path | None = Field(
+        default=None,
+        description=(
+            "File to read the bearer token from, in preference to the env var. Defaults to "
+            "$CREDENTIALS_DIRECTORY/auth_token when systemd passes a credential, which keeps the "
+            "token off the environment block that `systemctl show` prints."
         ),
     )
     auth_disabled: bool = Field(
@@ -130,7 +139,9 @@ class Settings(BaseSettings):
         description="If set, failed page interactions dump a screenshot and HTML here for debugging.",
     )
 
-    @field_validator("profile_dir", "debug_artifacts_dir", "browser_executable_path", mode="before")
+    @field_validator(
+        "profile_dir", "debug_artifacts_dir", "browser_executable_path", "auth_token_file", mode="before"
+    )
     @classmethod
     def _expand(cls, v: object) -> object:
         if isinstance(v, str) and v:
@@ -155,6 +166,29 @@ class Settings(BaseSettings):
     @classmethod
     def _leading_slash(cls, v: str) -> str:
         return v if v.startswith("/") else f"/{v}"
+
+    @model_validator(mode="after")
+    def _load_token_from_credential(self) -> Settings:
+        """Prefer a token file over the environment.
+
+        systemd's ``LoadCredential=`` drops the token into a 0400 file on tmpfs
+        and exports ``CREDENTIALS_DIRECTORY``; reading it from there means the
+        secret never appears in the unit's environment block.
+        """
+        path = self.auth_token_file
+        if path is None:
+            credentials = os.environ.get("CREDENTIALS_DIRECTORY")
+            if credentials:
+                candidate = Path(credentials) / "auth_token"
+                path = candidate if candidate.is_file() else None
+        if path is not None:
+            try:
+                token = path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise ValueError(f"Could not read the token file {path}: {exc}") from exc
+            if token:
+                object.__setattr__(self, "auth_token", token)
+        return self
 
     @model_validator(mode="after")
     def _auth_is_configured(self) -> Settings:

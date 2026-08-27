@@ -1,0 +1,9 @@
+[Unit]
+Description=socket-proxy 172.17.0.1:8765 -> 127.0.0.1:8765 for amazon-nl-mcp
+Requires=amazon-nl-mcp.service amazon-nl-mcp-bridge.socket
+After=amazon-nl-mcp.service amazon-nl-mcp-bridge.socket
+
+[Service]
+# Confirm the path on your box: dpkg -L systemd | grep proxyd
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=10min 127.0.0.1:8765
+NoNewPrivileges=yes
