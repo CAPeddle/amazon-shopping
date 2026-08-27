@@ -11,8 +11,20 @@ command -v uv >/dev/null || { echo "uv is not installed: https://docs.astral.sh/
 echo "==> Installing dependencies"
 (cd "$REPO_DIR" && uv sync --frozen)
 
-echo "==> Installing Chromium and its system libraries (needs sudo once)"
-(cd "$REPO_DIR" && uv run playwright install --with-deps chromium)
+echo "==> Installing Chromium"
+(cd "$REPO_DIR" && uv run playwright install chromium)
+
+# The shared libraries Chromium links against are an apt install, so this step
+# and only this step needs root. Skipped with a warning if sudo is unavailable:
+# on a box that has run a browser before, they are usually already present.
+if command -v sudo >/dev/null; then
+  echo "==> Installing Chromium's system libraries (sudo)"
+  (cd "$REPO_DIR" && sudo -E "$(uv run --frozen python -c 'import shutil; print(shutil.which("playwright"))')" install-deps chromium) \
+    || echo "!! could not install system libraries; if the browser fails to start, run: sudo playwright install-deps chromium"
+else
+  echo "!! no sudo; skipping system libraries. If Chromium fails to start, install them by hand"
+  echo "   (see docs/runbook.md) or run: uv run playwright install --with-deps chromium"
+fi
 
 install -d -m 700 "$CONFIG_DIR"
 if [[ ! -f "$CONFIG_DIR/auth_token" ]]; then

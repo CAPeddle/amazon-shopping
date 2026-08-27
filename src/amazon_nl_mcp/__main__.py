@@ -57,9 +57,20 @@ Ubuntu box, give it one and look at it over VNC:
 
 
 def _settings_or_exit(*, require_auth: bool = True) -> Settings:
+    """Load settings, or exit with the configuration problem stated plainly.
+
+    ``login`` and ``doctor`` must work *before* a bearer token exists — that is
+    often why someone is running them — so for those the missing-token error is
+    downgraded rather than the real configuration being discarded.
+    """
     try:
-        return get_settings() if require_auth else Settings(auth_disabled=True)
-    except Exception as exc:  # configuration errors should read as advice, not a traceback
+        return get_settings()
+    except Exception as exc:
+        if not require_auth:
+            try:
+                return Settings(auth_disabled=True)
+            except Exception:
+                pass
         print(f"Configuration error:\n  {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
