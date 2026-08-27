@@ -32,10 +32,12 @@ CAPTCHA_MARKERS: Final[list[str]] = [
 
 CAPTCHA_TEXT_MARKERS: Final[tuple[str, ...]] = (
     "voer de tekens in die je hieronder ziet",
+    "voer de tekens in die u hieronder ziet",
+    "voer de karakters in die u hieronder ziet",
     "enter the characters you see below",
-    "type de tekens",
-    "sorry, something went wrong",
+    "sorry, something went wrong on our end",
     "er is iets misgegaan",
+    "geef ons de kans het goed te maken",
     "geen robot",
     "not a robot",
 )
@@ -68,11 +70,23 @@ NAV_CART_COUNT: Final[list[str]] = [
     "[data-cart-count]",
 ]
 
+#: Second, independent read of the cart size: '3 items in winkelwagen'.
+NAV_CART_ARIA: Final[list[str]] = ["#nav-cart"]
+
+#: Presence of this attribute on the account nav link means signed OUT — it is
+#: dropped once the session is authenticated, which makes it the single most
+#: reliable tell on the page.
+NAV_SIGNIN_ROLE: Final[str] = "#nav-link-accountList[data-nav-role='signin']"
+
+NAV_ACCOUNT_LINK: Final[str] = "#nav-link-accountList"
+
+#: Exact greeting strings. Never substring-match "Hallo" — it prefixes both states.
 SIGNED_OUT_MARKERS: Final[tuple[str, ...]] = (
     "hallo, inloggen",
     "hello, sign in",
     "inloggen",
     "sign in",
+    "account en lijsten",
 )
 
 SIGN_IN_PAGE_MARKERS: Final[list[str]] = [
@@ -106,19 +120,21 @@ RESULT_LINK: Final[list[str]] = [
 ]
 
 RESULT_PRICE_DISPLAY: Final[list[str]] = [
-    ".a-price[data-a-color='base'] .a-offscreen",
+    "[data-cy='price-recipe'] .a-price[data-a-color='base'] .a-offscreen",
+    "[data-cy='price-recipe'] .a-price:not(.a-text-price) .a-offscreen",
+    ".a-price:not(.a-text-price):not([data-a-strike='true']) .a-offscreen",
     ".a-price .a-offscreen",
-    ".a-color-price",
 ]
 
 RESULT_PRICE_WHOLE: Final[list[str]] = [".a-price .a-price-whole"]
 RESULT_PRICE_FRACTION: Final[list[str]] = [".a-price .a-price-fraction"]
 
 RESULT_RATING: Final[list[str]] = [
+    "[data-cy='reviews-block'] i[class*='a-star-'] .a-icon-alt",
+    "i[class*='a-star-'] .a-icon-alt",
     "[data-cy='reviews-block'] .a-icon-alt",
-    "i.a-icon-star-small .a-icon-alt",
     ".a-icon-star .a-icon-alt",
-    "[aria-label*='van 5 sterren']",
+    "[aria-label*='sterren']",
     "[aria-label*='out of 5 stars']",
 ]
 
@@ -141,9 +157,13 @@ RESULT_PRIME: Final[list[str]] = [
 RESULT_SPONSORED: Final[list[str]] = [
     ".puis-sponsored-label-text",
     "[data-component-type='sp-sponsored-result']",
+    "a[href^='/sspa/click']",
     "a[aria-label*='Gesponsord']",
-    "span:has-text('Gesponsord')",
 ]
+
+#: A class on the result container itself, checked separately from the
+#: descendant selectors above.
+SPONSORED_CONTAINER_CLASS: Final[str] = "AdHolder"
 
 RESULT_AVAILABILITY: Final[list[str]] = [
     "[data-cy='delivery-recipe'] .a-color-price",
@@ -168,13 +188,29 @@ NO_RESULTS_MARKERS: Final[tuple[str, ...]] = (
 PDP_TITLE: Final[list[str]] = ["#productTitle", "#title span", "h1#title"]
 
 PDP_PRICE_DISPLAY: Final[list[str]] = [
-    "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
-    "#corePrice_feature_div .a-price .a-offscreen",
+    "#corePriceDisplay_desktop_feature_div .a-price:not(.a-text-price):not([data-a-strike='true']) .a-offscreen",
+    "#apex_desktop .a-price:not(.a-text-price):not([data-a-strike='true']) .a-offscreen",
+    "#corePrice_feature_div .a-price:not(.a-text-price) .a-offscreen",
     "#corePrice_desktop .a-price .a-offscreen",
     "#price_inside_buybox",
     "#newBuyBoxPrice",
     ".a-price .a-offscreen",
 ]
+
+#: Hidden input carrying the ASIN the page actually resolved to. Catches the case
+#: where /dp/<child> silently redirected to a variation parent.
+PDP_ASIN_INPUT: Final[list[str]] = ["input#ASIN", "input[name='ASIN']", "#dp [data-asin]"]
+
+PDP_OUT_OF_STOCK: Final[list[str]] = ["#outOfStock", "#buybox-see-all-buying-choices"]
+
+#: Availability wording amazon.nl uses for a listing that cannot be bought now.
+UNAVAILABLE_TEXT_MARKERS: Final[tuple[str, ...]] = (
+    "momenteel niet verkrijgbaar",
+    "tijdelijk niet op voorraad",
+    "niet op voorraad",
+    "currently unavailable",
+    "we weten niet of en wanneer dit item weer op voorraad is",
+)
 
 PDP_AVAILABILITY: Final[list[str]] = [
     "#availability span.a-color-success",
@@ -224,6 +260,7 @@ PDP_BULLETS: Final[list[str]] = [
 ]
 
 PDP_VARIANT_ITEMS: Final[list[str]] = [
+    "#twister_feature_div li[data-asin]:not([data-asin=''])",
     "#twister li[data-defaultasin]",
     "#twister li[data-dp-url]",
     "#variation_size_name li",
@@ -251,11 +288,11 @@ ADD_CONFIRMATION_MARKERS: Final[list[str]] = [
 
 WARRANTY_DECLINE: Final[list[str]] = [
     "#attachSiNoCoverage input[type='submit']",
-    "#attachSiNoCoverage-announce",
+    "input[aria-labelledby='attachSiNoCoverage-announce']",
+    "#attachSiNoCoverage",
+    "#attach-sidesheet-view-cart-button",
     "input[name='attachSiNoCoverage']",
-    "#siNoCoverage-announce",
     "button:has-text('Nee, bedankt')",
-    "a:has-text('Nee, bedankt')",
 ]
 
 VARIANT_REQUIRED_MARKERS: Final[tuple[str, ...]] = (
@@ -294,10 +331,16 @@ CART_LINE_QUANTITY_SELECT: Final[list[str]] = [
     ".sc-quantity-select select",
 ]
 
+CART_LINE_QUANTITY_INPUT: Final[list[str]] = [
+    "input[name='quantityBox']",
+    "input.sc-quantity-textfield",
+    "input[data-a-selector='value']",
+]
+
 CART_LINE_QUANTITY_TEXT: Final[list[str]] = [
     "[data-a-selector='value'] .a-dropdown-prompt",
+    ".a-dropdown-prompt",
     "span.sc-quantity-textfield",
-    "input[data-a-selector='value']",
     "span[data-a-selector='value']",
 ]
 

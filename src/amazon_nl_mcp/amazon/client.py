@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from datetime import UTC, datetime
-from urllib.parse import quote_plus
+from typing import Literal, TypedDict
+from urllib.parse import quote_plus, urlencode
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
@@ -51,6 +51,16 @@ log = get_logger(__name__)
 #: Amazon's quantity dropdown tops out here; larger orders need the cart page.
 MAX_PDP_QUANTITY = 30
 
+WaitState = Literal["commit", "domcontentloaded", "load", "networkidle"]
+
+
+class _StatusBase(TypedDict):
+    """Fields every :class:`SessionStatus` carries regardless of outcome."""
+
+    storefront: str
+    profile_dir: str
+    write_enabled: bool
+
 
 class AmazonClient:
     """High-level operations on the signed-in amazon.nl storefront."""
@@ -67,19 +77,30 @@ class AmazonClient:
         return self._settings.base_url
 
     def search_url(self, query: str, page_number: int = 1) -> str:
-        url = f"{self.base_url}/s?k={quote_plus(query)}"
+        url = f"{self.base_url}/s?k={quote_plus(query)}&language=nl_NL"
         return url if page_number <= 1 else f"{url}&page={page_number}"
 
-    def product_url(self, asin: str) -> str:
-        return f"{self.base_url}/dp/{asin}"
+    def product_url(self, asin: str, *, localised: bool = False) -> str:
+        url = f"{self.base_url}/dp/{asin}"
+        return f"{url}?language=nl_NL" if localised else url
 
     @property
     def cart_url(self) -> str:
         return f"{self.base_url}/gp/cart/view.html"
 
+    def add_to_cart_url(self, asin: str, quantity: int) -> str:
+        """The legacy associates add endpoint.
+
+        One GET, session cookies attached, no CSRF token to scrape and no
+        80-request product page to render. It has outlived a decade of Amazon
+        redesigns, which is exactly why it is the primary path here.
+        """
+        params = urlencode({"ASIN.1": asin, "Quantity.1": str(quantity)})
+        return f"{self.base_url}/gp/aws/cart/add.html?{params}"
+
     # -- navigation primitives -------------------------------------------
 
-    async def _goto(self, page: Page, url: str, *, wait: str = "domcontentloaded") -> None:
+    async def _goto(self, page: Page, url: str, *, wait: WaitState = "domcontentloaded") -> None:
         """Navigate, then screen the response for Amazon's automation checks."""
         try:
             await page.goto(url, wait_until=wait, timeout=self._settings.nav_timeout_ms)
@@ -124,21 +145,35 @@ class AmazonClient:
 
     async def _require_signed_in(self, page: Page) -> None:
         """Raise :class:`NotLoggedInError` unless the nav shows a signed-in account."""
-        if not await self._is_signed_in(page):
+        if not await self.is_signed_in(page):
             raise NotLoggedInError()
 
-    async def _is_signed_in(self, page: Page) -> bool:
-        if await X.exists(page, S.SIGN_IN_PAGE_MARKERS):
+    async def is_signed_in(self, page: Page) -> bool:
+        """Whether ``page`` shows an authenticated amazon.nl session.
+
+        Three independent tells, cheapest and strongest first.
+
+        ``data-nav-role="signin"`` is present on the account link only while
+        signed out, and disappears once the session is authenticated. The
+        greeting text is matched *exactly*, never by substring: "Hallo" prefixes
+        both "Hallo, inloggen" and "Hallo, <name>".
+        """
+        if "/ap/signin" in page.url or await X.exists(page, S.SIGN_IN_PAGE_MARKERS):
+            return False
+        if await X.exists(page, [S.NAV_SIGNIN_ROLE]):
+            return False
+        href = await X.first_attr(page, [S.NAV_ACCOUNT_LINK], "href")
+        if href and "/ap/signin" in href:
             return False
         greeting = await X.first_text(page, S.NAV_ACCOUNT_GREETING)
         if greeting is None:
+            # No nav at all: a wall, or a page shape we do not know. Not a
+            # signed-in state either way.
             return False
-        return not any(marker == greeting.strip().lower() for marker in S.SIGNED_OUT_MARKERS) and not any(
-            greeting.strip().lower().endswith(marker) for marker in S.SIGNED_OUT_MARKERS
-        )
+        return greeting.strip().lower() not in S.SIGNED_OUT_MARKERS
 
     async def _cart_count(self, page: Page) -> int:
-        return X.parse_int(await X.first_text(page, S.NAV_CART_COUNT)) or 0
+        return await X.read_cart_count(page)
 
     def _mark_success(self) -> None:
         self.last_success_at = time.time()
@@ -152,7 +187,7 @@ class AmazonClient:
         answer "why is nothing working?", so a bot wall or a dead browser is a
         *state*, not an exception.
         """
-        base = {
+        base: _StatusBase = {
             "storefront": self.base_url,
             "profile_dir": str(self._settings.profile_dir),
             "write_enabled": self._settings.write_enabled,
@@ -170,7 +205,7 @@ class AmazonClient:
         try:
             async with self._browser.page(rate_limited=False) as page:
                 await self._goto(page, self.base_url)
-                signed_in = await self._is_signed_in(page)
+                signed_in = await self.is_signed_in(page)
                 greeting = await X.first_text(page, S.NAV_ACCOUNT_GREETING)
                 count = await self._cart_count(page)
                 self._mark_success()
@@ -217,7 +252,7 @@ class AmazonClient:
                 text = await X.page_text_lower(page, limit=4_000)
                 if any(marker in text for marker in S.NO_RESULTS_MARKERS):
                     has_more = False
-                elif not await self._is_signed_in(page):
+                elif not await self.is_signed_in(page):
                     raise NotLoggedInError()
             self._mark_success()
             log.info("search_completed", query_length=len(query), count=len(products), page=page_number)
@@ -239,7 +274,7 @@ class AmazonClient:
             return detail
 
     async def _load_product(self, page: Page, asin: str) -> ProductDetail:
-        await self._goto(page, self.product_url(asin))
+        await self._goto(page, self.product_url(asin, localised=True))
         title = await X.first_text(page, S.PDP_TITLE)
         if not title:
             text = await X.page_text_lower(page, limit=3_000)
@@ -256,14 +291,26 @@ class AmazonClient:
             bool(variants) or any(m in page_text for m in S.VARIANT_REQUIRED_MARKERS)
         )
 
+        # /dp/<child> can silently resolve to a variation parent; the hidden
+        # input says which ASIN the buy box actually belongs to.
+        resolved = (await X.first_attr(page, S.PDP_ASIN_INPUT, "value") or "").strip().upper()
+        if X.is_valid_asin(resolved) and resolved != asin.upper():
+            log.info("asin_redirected", requested=asin.upper(), resolved=resolved)
+            asin = resolved
+
+        availability = await X.first_text(page, S.PDP_AVAILABILITY)
+        unavailable = await X.exists(page, S.PDP_OUT_OF_STOCK) or any(
+            marker in (availability or "").lower() for marker in S.UNAVAILABLE_TEXT_MARKERS
+        )
+
         bullets = await self._read_bullets(page)
         return ProductDetail(
             asin=asin.upper(),
             title=title,
             url=self.product_url(asin.upper()),
             price=X.parse_price(await X.first_text(page, S.PDP_PRICE_DISPLAY)),
-            availability=await X.first_text(page, S.PDP_AVAILABILITY),
-            in_stock=has_add_button,
+            availability=availability,
+            in_stock=has_add_button and not unavailable,
             rating=X.parse_rating(
                 await X.first_text(page, S.PDP_RATING) or await X.first_attr(page, S.PDP_RATING, "title")
             ),
@@ -326,12 +373,22 @@ class AmazonClient:
     async def add_to_cart(self, asin: str, quantity: int = 1) -> AddToCartResult:
         """Add ``quantity`` of ``asin`` to the personal cart and verify it landed.
 
-        The verification is the point. Amazon will happily render a success
-        banner for an add that did not change the cart (a variant parent, a
-        listing that went out of stock between load and click), so the result
-        this returns is read back from the cart page, not from the banner.
+        Two mechanisms, in order:
+
+        1. ``/gp/aws/cart/add.html?ASIN.1=..&Quantity.1=..`` — one authenticated
+           GET, no CSRF token to scrape, no 80-request page render. This is the
+           primary path.
+        2. clicking ``#add-to-cart-button`` on the product page, as the fallback
+           for listings the legacy endpoint refuses.
+
+        Either way the result is read back off the **cart page**. Amazon renders
+        a success banner for adds that changed nothing (a variation parent, a
+        listing that sold out between load and click), so the banner is never
+        the evidence.
         """
         asin = asin.strip().upper()
+        wanted = max(1, min(quantity, MAX_PDP_QUANTITY))
+
         async with self._browser.page() as page:
             detail = await self._load_product(page, asin)
             await self._require_signed_in(page)
@@ -340,42 +397,75 @@ class AmazonClient:
                 raise VariantSelectionRequiredError(asin, [v.label for v in detail.variants])
             if not detail.in_stock:
                 raise ProductUnavailableError(
-                    f"{detail.title!r} ({asin}) has no add-to-cart control on amazon.nl"
+                    f"{detail.title!r} ({asin}) cannot be added on amazon.nl"
                     + (f" — availability reads {detail.availability!r}." if detail.availability else "."),
-                    hint="Use amazon_get_product to check availability, or pick another listing.",
+                    hint="Check amazon_get_product for variants, or pick another listing.",
+                )
+            # The buy box may belong to a different ASIN than the one asked for.
+            asin = detail.asin
+
+            before = await self._cart_quantities(page)
+            baseline = before.get(asin, 0)
+
+            mechanism = "add_url"
+            await self._goto(page, self.add_to_cart_url(asin, wanted))
+            await self._check_variant_interstitial(page, asin, detail)
+            after = await self._cart_quantities(page)
+
+            if after.get(asin, 0) <= baseline:
+                log.info("add_url_ineffective_falling_back", asin=asin)
+                mechanism = "pdp_click"
+                await self._add_via_product_page(page, asin, wanted)
+                after = await self._cart_quantities(page)
+
+            in_cart = after.get(asin, 0)
+            if in_cart <= baseline:
+                raise CartVerificationError(
+                    f"Neither add mechanism put {asin} in the cart.",
+                    hint=(
+                        f"Open {self.cart_url} in a browser to check. This usually means the listing "
+                        "needs a variant chosen, is sold by a seller that will not ship here, or the "
+                        "session expired mid-request."
+                    ),
                 )
 
-            before = await self._quantity_in_cart(asin)
-            applied = await self._set_pdp_quantity(page, quantity)
-            await self._click_add_to_cart(page)
-            await self._dismiss_upsells(page)
-
-            after, cart = await self._verify_added(asin, expected_min=before + applied)
+            cart = await self._read_cart(page)
             self._mark_success()
-
-            added = after - before
+            added = in_cart - baseline
             message = (
-                f"Added {added}x {detail.title!r} to the amazon.nl cart "
-                f"({after} now in the cart, {cart.item_count} items total). "
+                f"Added {added}x {detail.title!r} to the amazon.nl cart via {mechanism} "
+                f"({in_cart} of this item now in the cart, {cart.item_count} items total). "
                 f"Review and check out yourself at {self.cart_url} — this service never places orders."
             )
-            if applied < quantity:
-                message += (
-                    f" Only {applied} could be added in one go (Amazon's dropdown caps at "
-                    f"{MAX_PDP_QUANTITY}); call again for the rest."
-                )
-            log.info("added_to_cart", asin=asin, requested=quantity, in_cart=after)
+            if wanted < quantity:
+                message += f" Only {wanted} could be added at once; call again for the rest."
+            log.info("added_to_cart", asin=asin, requested=quantity, in_cart=in_cart, mechanism=mechanism)
             return AddToCartResult(
                 ok=True,
                 asin=asin,
                 title=detail.title,
                 requested_quantity=quantity,
-                quantity_in_cart=after,
+                quantity_in_cart=in_cart,
                 price=detail.price,
                 cart_item_count=cart.item_count,
                 cart_url=self.cart_url,
                 message=message,
             )
+
+    async def _check_variant_interstitial(self, page: Page, asin: str, detail: ProductDetail) -> None:
+        """The add endpoint answers a variation parent with a 'Kies een optie' page."""
+        text = await X.page_text_lower(page, limit=4_000)
+        if any(marker in text for marker in S.VARIANT_REQUIRED_MARKERS):
+            raise VariantSelectionRequiredError(asin, [v.label for v in detail.variants])
+
+    async def _add_via_product_page(self, page: Page, asin: str, quantity: int) -> None:
+        """Fallback: drive the product page's own add-to-cart form."""
+        await self._goto(page, self.product_url(asin, localised=True))
+        applied = await self._set_pdp_quantity(page, quantity)
+        await self._click_add_to_cart(page)
+        await self._dismiss_upsells(page)
+        if applied < quantity:
+            log.info("pdp_quantity_capped", asin=asin, wanted=quantity, applied=applied)
 
     async def _set_pdp_quantity(self, page: Page, quantity: int) -> int:
         """Set the quantity dropdown; return the quantity actually selected."""
@@ -405,49 +495,38 @@ class AmazonClient:
         await self._raise_if_blocked(page)
 
     async def _dismiss_upsells(self, page: Page) -> None:
-        """Decline the protection-plan / warranty interstitial if Amazon shows one."""
+        """Decline the protection-plan side sheet.
+
+        The item is already in the cart by the time this appears — the sheet is
+        an upsell, not a gate — so a failure to find it is not a failure to add.
+        """
         for selector in S.WARRANTY_DECLINE:
             try:
                 locator = page.locator(selector).first
                 if await locator.count() and await locator.is_visible():
                     await locator.click(timeout=3_000)
-                    await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                    with contextlib.suppress(PlaywrightTimeout):
+                        await page.wait_for_load_state("domcontentloaded", timeout=10_000)
                     return
             except PlaywrightError:
                 continue
 
-    async def _quantity_in_cart(self, asin: str) -> int:
-        """How many units of ``asin`` the cart currently holds."""
-        async with self._browser.page(rate_limited=False) as page:
-            cart = await self._read_cart(page)
-        return sum(line.quantity for line in cart.lines if (line.asin or "").upper() == asin)
+    async def _cart_quantities(self, page: Page) -> dict[str, int]:
+        """ASIN -> quantity, read off the cart page.
 
-    async def _verify_added(self, asin: str, *, expected_min: int) -> tuple[int, Cart]:
-        """Re-read the cart until it shows the item, or give up and say so.
-
-        Amazon's cart is eventually consistent for a second or two after an add,
-        so one miss is not a failure; three is.
+        Retries once: the cart is briefly stale straight after an add, and one
+        empty read on a cart that should not be empty is not evidence of failure.
         """
-        last: Cart | None = None
-        for attempt in range(3):
-            async with self._browser.page(rate_limited=False) as page:
-                cart = await self._read_cart(page)
-            last = cart
-            found = sum(line.quantity for line in cart.lines if (line.asin or "").upper() == asin)
-            if found >= expected_min or (found > 0 and attempt == 2):
-                return found, cart
-            await asyncio.sleep(1.0 + attempt)
-        found = sum(line.quantity for line in last.lines if (line.asin or "").upper() == asin) if last else 0
-        if found:
-            return found, last  # type: ignore[return-value]
-        raise CartVerificationError(
-            f"Amazon accepted the add for {asin} but the cart does not show it.",
-            hint=(
-                f"Open {self.cart_url} in a browser to check. This can happen when the listing "
-                "requires a variant, is sold by a blocked seller, or the session expired mid-request."
-            ),
-        )
-
-
-def utcnow_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+        for attempt in range(2):
+            await self._goto(page, self.cart_url)
+            await self._require_signed_in(page)
+            lines = await X.extract_cart_lines(page, self.base_url)
+            if lines or attempt == 1:
+                quantities: dict[str, int] = {}
+                for line in lines:
+                    key = (line.asin or "").upper()
+                    if key:
+                        quantities[key] = quantities.get(key, 0) + line.quantity
+                return quantities
+            await asyncio.sleep(1.0)
+        return {}

@@ -19,7 +19,7 @@ from amazon_nl_mcp.models import CartLine, Money, ProductSummary, ProductVariant
 
 _ASIN_RE = re.compile(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?:[/?]|$)", re.IGNORECASE)
 _ASIN_STRICT = re.compile(r"^[A-Z0-9]{10}$")
-_RATING_RE = re.compile(r"(\d+[.,]\d+|\d+)\s*(?:van|out of|/)\s*5")
+_RATING_RE = re.compile(r"(\d+[.,]\d+|\d+)\s*(?:van de|van|out of|/)\s*5")
 _INT_RE = re.compile("\\d[\\d.\u00a0\u202f ]*")
 _PRICE_RE = re.compile("(\\d{1,3}(?:[.\u00a0\u202f ]\\d{3})*(?:,\\d{1,2})?|\\d+(?:\\.\\d{1,2})?)")
 
@@ -224,9 +224,17 @@ async def extract_search_row(row: Locator, base_url: str) -> ProductSummary | No
         ),
         image_url=await first_attr(row, S.RESULT_IMAGE, "src"),
         is_prime=await exists(row, S.RESULT_PRIME),
-        is_sponsored=await exists(row, S.RESULT_SPONSORED),
+        is_sponsored=await _is_sponsored(row),
         availability=await first_text(row, S.RESULT_AVAILABILITY),
     )
+
+
+async def _is_sponsored(row: Locator) -> bool:
+    """Paid placements advertise themselves four different ways; any one counts."""
+    classes = await row.get_attribute("class") or ""
+    if S.SPONSORED_CONTAINER_CLASS in classes.split():
+        return True
+    return await exists(row, S.RESULT_SPONSORED)
 
 
 async def extract_search_rows(page: Page, base_url: str, limit: int) -> list[ProductSummary]:
@@ -319,7 +327,19 @@ async def extract_cart_line(line: Locator, base_url: str) -> CartLine | None:
 
 
 async def _cart_line_quantity(line: Locator) -> int:
-    """Quantity of a cart line, from the select's value or the rendered text."""
+    """Quantity of a cart line, whichever of Amazon's three widgets renders it."""
+    box = await first_locator(line, S.CART_LINE_QUANTITY_INPUT)
+    if box is not None:
+        try:
+            parsed = parse_int(await box.input_value(timeout=1_500))
+            if parsed:
+                return parsed
+        except PlaywrightError:
+            pass
+        parsed = parse_int(await box.get_attribute("value"))
+        if parsed:
+            return parsed
+
     select = await first_locator(line, S.CART_LINE_QUANTITY_SELECT)
     if select is not None:
         try:
@@ -333,8 +353,7 @@ async def _cart_line_quantity(line: Locator) -> int:
     parsed = parse_int(text)
     if parsed:
         return parsed
-    value = await first_attr(line, S.CART_LINE_QUANTITY_TEXT, "value")
-    return parse_int(value) or 1
+    return 1
 
 
 async def extract_cart_lines(page: Page, base_url: str) -> list[CartLine]:
@@ -352,6 +371,14 @@ async def extract_cart_lines(page: Page, base_url: str) -> list[CartLine]:
         if lines:
             break
     return lines
+
+
+async def read_cart_count(page: Page) -> int:
+    """Units in the cart, per the nav badge, with the aria-label as a second read."""
+    count = parse_int(await first_text(page, S.NAV_CART_COUNT))
+    if count is not None:
+        return count
+    return parse_int(await first_attr(page, S.NAV_CART_ARIA, "aria-label")) or 0
 
 
 async def page_text_lower(page: Page, limit: int = 20_000) -> str:

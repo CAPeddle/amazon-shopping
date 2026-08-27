@@ -146,6 +146,11 @@ class BrowserSession:
                     user_data_dir=str(profile),
                     headless=self._headless,
                     channel=self._settings.browser_channel,
+                    executable_path=(
+                        str(self._settings.browser_executable_path)
+                        if self._settings.browser_executable_path
+                        else None
+                    ),
                     args=LAUNCH_ARGS,
                     locale=self._settings.locale,
                     timezone_id=self._settings.timezone,

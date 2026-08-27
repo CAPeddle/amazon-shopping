@@ -76,6 +76,13 @@ class Settings(BaseSettings):
         default=None,
         description="Chromium channel to launch, e.g. 'chrome'. None uses Playwright's bundled build.",
     )
+    browser_executable_path: Path | None = Field(
+        default=None,
+        description=(
+            "Explicit Chromium binary to launch. Escape hatch for hosts where the bundled build "
+            "cannot be downloaded, e.g. /usr/bin/chromium."
+        ),
+    )
     locale: str = Field(default="nl-NL", description="Browser locale sent to Amazon.")
     timezone: str = Field(default="Europe/Amsterdam", description="Browser timezone.")
     user_agent: str | None = Field(default=None, description="Override the browser User-Agent.")
@@ -116,7 +123,7 @@ class Settings(BaseSettings):
         description="If set, failed page interactions dump a screenshot and HTML here for debugging.",
     )
 
-    @field_validator("profile_dir", "debug_artifacts_dir", mode="before")
+    @field_validator("profile_dir", "debug_artifacts_dir", "browser_executable_path", mode="before")
     @classmethod
     def _expand(cls, v: object) -> object:
         if isinstance(v, str) and v:

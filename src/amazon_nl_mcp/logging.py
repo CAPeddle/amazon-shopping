@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+from collections.abc import MutableMapping
 from typing import Any
 
 import structlog
@@ -30,7 +31,7 @@ def _scrub_text(value: str) -> str:
     return _GREETING.sub(rf"\1 {_REDACTED}", value)
 
 
-def _redact(_logger: Any, _name: str, event: dict[str, Any]) -> dict[str, Any]:
+def _redact(_logger: Any, _name: str, event: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
     for key, value in list(event.items()):
         if key.lower() in _SENSITIVE_KEYS:
             event[key] = _REDACTED
