@@ -13,9 +13,12 @@ under the MCP path requires the bearer token.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -29,6 +32,7 @@ from amazon_nl_mcp.amazon.client import AmazonClient
 from amazon_nl_mcp.browser import BrowserSession
 from amazon_nl_mcp.config import Settings
 from amazon_nl_mcp.logging import get_logger
+from amazon_nl_mcp.models import SessionState
 from amazon_nl_mcp.server import create_mcp_server
 
 log = get_logger(__name__)
@@ -49,7 +53,9 @@ class BearerAuthMiddleware:
 
     def __init__(self, app: ASGIApp, token: str | None, *, enabled: bool = True) -> None:
         self.app = app
-        self._token = token
+        # Compared as bytes: an Authorization header may carry any byte, and
+        # secrets.compare_digest refuses non-ASCII str arguments outright.
+        self._expected = token.encode("utf-8") if token else None
         self._enabled = enabled and bool(token)
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:  # type: ignore[type-arg]
@@ -60,9 +66,8 @@ class BearerAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
-        provided = _bearer(headers.get("authorization", ""))
-        if provided is None or self._token is None or not secrets.compare_digest(provided, self._token):
+        provided = _bearer(_header(scope, b"authorization"))
+        if provided is None or self._expected is None or not secrets.compare_digest(provided, self._expected):
             log.warning("auth_rejected", path=scope.get("path"), client=str(scope.get("client")))
             response = JSONResponse(
                 {
@@ -77,9 +82,18 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-def _bearer(header: str) -> str | None:
-    scheme, _, value = header.partition(" ")
-    if scheme.lower() != "bearer" or not value.strip():
+def _header(scope: Mapping[str, Any], name: bytes) -> bytes:
+    """Raw header bytes, without the lossy decode a str lookup would need."""
+    headers: Iterable[tuple[bytes, bytes]] = scope.get("headers", ())
+    for key, value in headers:
+        if key.lower() == name:
+            return value
+    return b""
+
+
+def _bearer(header: bytes) -> bytes | None:
+    scheme, _, value = header.partition(b" ")
+    if scheme.lower() != b"bearer" or not value.strip():
         return None
     return value.strip()
 
@@ -114,6 +128,29 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
         allowed_hosts=sorted(hosts),
         allowed_origins=sorted(origins),
     )
+
+
+class _Readiness:
+    """TTL-cached readiness, so an open endpoint cannot become a traffic source."""
+
+    def __init__(self, client: AmazonClient, browser: BrowserSession, *, ttl_s: float) -> None:
+        self._client = client
+        self._browser = browser
+        self._ttl_s = ttl_s
+        self._lock = asyncio.Lock()
+        self._state: SessionState = "unknown"
+        self._checked_at = 0.0
+
+    async def state(self) -> SessionState:
+        if not self._browser.is_running:
+            # Never start Chromium on an unauthenticated request.
+            return "browser_down"
+        async with self._lock:
+            if time.monotonic() - self._checked_at < self._ttl_s:
+                return self._state
+            self._state = (await self._client.session_status()).state
+            self._checked_at = time.monotonic()
+            return self._state
 
 
 def build_app(settings: Settings) -> FastAPI:
@@ -177,19 +214,22 @@ def build_app(settings: Settings) -> FastAPI:
             }
         )
 
+    readiness = _Readiness(client, browser, ttl_s=settings.readiness_ttl_s)
+
     @app.get("/readyz")
     async def readyz() -> Response:
-        """Readiness: Chromium is alive and the amazon.nl session is valid."""
-        status = await client.session_status()
-        code = 200 if status.state == "authenticated" else 503
+        """Readiness: Chromium is alive and the amazon.nl session is valid.
+
+        Unauthenticated, so it must not be a lever: the answer is cached, and a
+        stopped browser is reported without starting one. A monitoring loop
+        therefore cannot drive amazon.nl traffic or spend the shopping budget.
+        The body says whether the service works and nothing about the account.
+        """
+        state = await readiness.state()
+        ready = state == "authenticated"
         return JSONResponse(
-            {
-                "status": "ready" if code == 200 else "not_ready",
-                "session_state": status.state,
-                "cart_item_count": status.cart_item_count,
-                "detail": status.detail,
-            },
-            status_code=code,
+            {"status": "ready" if ready else "not_ready", "session_state": state},
+            status_code=200 if ready else 503,
         )
 
     @app.get("/")

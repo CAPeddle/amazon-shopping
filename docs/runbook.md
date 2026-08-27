@@ -60,8 +60,10 @@ curl -s localhost:8765/healthz | jq
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8765/readyz
 ```
 
-`/readyz` costs a page load, so poll it in minutes, not seconds — it counts against the same
-rate limit real work does.
+`/readyz` is unauthenticated, so its answer is cached for `AMAZON_MCP_READINESS_TTL_S` (30s by
+default) and it will never start a stopped browser. Polling it harder than that changes nothing:
+it cannot be used to drive amazon.nl traffic, and it reports only whether the service works, never
+anything about the account.
 
 ---
 

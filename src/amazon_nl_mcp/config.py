@@ -129,6 +129,15 @@ class Settings(BaseSettings):
         default=True, description="Allow cart mutations. Set false for a read-only deployment."
     )
 
+    readiness_ttl_s: float = Field(
+        default=30.0,
+        ge=0,
+        description=(
+            "How long /readyz may serve a cached answer. It is unauthenticated, so this is what "
+            "stops a monitoring loop from turning into amazon.nl traffic."
+        ),
+    )
+
     # -- Observability ----------------------------------------------------
     log_level: str = Field(default="INFO", description="Root log level.")
     log_format: LogFormat = Field(
