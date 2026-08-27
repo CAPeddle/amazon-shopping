@@ -24,7 +24,10 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AMAZON_MCP_",
-        env_file=".env",
+        # Both the service and the CLI read the same two files, in this order,
+        # so `amazon-nl-mcp login` seeds the profile the service will use rather
+        # than one only it can see.
+        env_file=(".env", "~/.config/amazon-nl-mcp/env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -74,9 +77,10 @@ class Settings(BaseSettings):
 
     # -- Browser ----------------------------------------------------------
     profile_dir: Path = Field(
-        default=Path("~/.local/share/amazon-nl-mcp/profile"),
+        default=Path("~/.local/state/amazon-nl-mcp/profile"),
         description=(
-            "Chromium user-data-dir holding the logged-in amazon.nl session. "
+            "Chromium user-data-dir holding the logged-in amazon.nl session. Defaults to the "
+            "systemd StateDirectory the unit uses, so the CLI and the service share one profile. "
             "SECRET: it grants full access to the account. chmod 700, never commit or back up."
         ),
     )
@@ -153,7 +157,11 @@ class Settings(BaseSettings):
     )
     debug_artifacts_dir: Path | None = Field(
         default=None,
-        description="If set, failed page interactions dump a screenshot and HTML here for debugging.",
+        description=(
+            "If set, a bot wall or a failed add dumps a screenshot and the page HTML here. "
+            "SENSITIVE: those files are a signed-in page, so they carry the account name and "
+            "usually the delivery address. Unset unless you are actively debugging."
+        ),
     )
 
     @field_validator(

@@ -34,8 +34,15 @@ fi
 chmod 600 "$CONFIG_DIR/auth_token"
 [[ -f "$CONFIG_DIR/env" ]] || install -m 600 "$REPO_DIR/deploy/env.example" "$CONFIG_DIR/env"
 
+# The shipped unit assumes ~/amazon-shopping and ~/.local/bin/uv. Point it at
+# wherever this checkout and this uv actually are, so a clone anywhere works.
+UV_BIN="$(command -v uv)"
 install -d -m 755 "$UNIT_DIR"
-install -m 644 "$REPO_DIR/deploy/amazon-nl-mcp.service" "$UNIT_DIR/amazon-nl-mcp.service"
+sed -e "s#^WorkingDirectory=.*#WorkingDirectory=${REPO_DIR}#" \
+    -e "s#^ExecStart=.*#ExecStart=${UV_BIN} run --frozen --no-dev amazon-nl-mcp serve#" \
+    -e "s#^Environment=PATH=.*#Environment=PATH=$(dirname "$UV_BIN"):/usr/local/bin:/usr/bin:/bin#" \
+    "$REPO_DIR/deploy/amazon-nl-mcp.service" > "$UNIT_DIR/amazon-nl-mcp.service"
+chmod 644 "$UNIT_DIR/amazon-nl-mcp.service"
 
 # Without linger the whole user manager — and the browser with it — is torn
 # down when the last login session ends.

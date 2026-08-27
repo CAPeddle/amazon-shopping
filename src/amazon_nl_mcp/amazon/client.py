@@ -163,9 +163,31 @@ class AmazonClient:
             text = await X.page_text_lower(page, limit=3_000)
             blocked = any(marker in text for marker in S.CAPTCHA_TEXT_MARKERS)
         if blocked:
+            await self._dump_debug_artifacts(page, "bot_wall")
             self._browser.breaker.trip()
             raise BotWallError()
         self._browser.breaker.reset()
+
+    async def _dump_debug_artifacts(self, page: Page, label: str) -> None:
+        """Save the page that defeated us, when the operator has asked for it.
+
+        Off unless ``AMAZON_MCP_DEBUG_ARTIFACTS_DIR`` is set, because these files
+        are a signed-in page: they contain the account name, and usually the
+        delivery address. The directory is created 0700 and never cleaned up.
+        """
+        directory = self._settings.debug_artifacts_dir
+        if directory is None:
+            return
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            directory.chmod(0o700)
+            stem = directory / f"{label}-{int(time.time())}"
+            await page.screenshot(path=str(stem.with_suffix(".png")), full_page=False)
+            stem.with_suffix(".html").write_text(await page.content(), encoding="utf-8")
+        except (PlaywrightError, OSError) as exc:
+            log.warning("debug_artifacts_failed", error=str(exc))
+        else:
+            log.info("debug_artifacts_written", label=label, directory=str(directory))
 
     async def _require_signed_in(self, page: Page) -> None:
         """Raise :class:`NotLoggedInError` unless the nav shows a signed-in account."""
@@ -485,6 +507,7 @@ class AmazonClient:
 
             in_cart = _quantity_of(asin, cart)
             if in_cart <= baseline:
+                await self._dump_debug_artifacts(page, f"add_failed_{asin}")
                 raise CartVerificationError(
                     f"Neither add mechanism put {asin} in the cart.",
                     hint=(

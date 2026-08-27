@@ -127,15 +127,25 @@ and custom connectors dial out from Anthropic's cloud. Bridge it with
 where `headers.txt` is one `Authorization: Bearer <token>` line, mode 600. A header file rather
 than `--header` keeps the token out of the process argv, where any local user can read it.
 
-**Anything else on the box** — it is an ordinary HTTP service:
+**Anything else on the box.** The health endpoints are plain HTTP and need no token:
 
 ```bash
-TOKEN=$(cat ~/.config/amazon-nl-mcp/auth_token)
-curl -s localhost:8765/healthz
+curl -s localhost:8765/healthz           # process up
 curl -s localhost:8765/readyz            # 503 until the amazon.nl session is valid
-curl -s -H "Authorization: Bearer $TOKEN" localhost:8765/mcp -X POST \
-     -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+The MCP endpoint itself is a protocol, not a REST API — a hand-rolled `curl` gets
+`Missing session ID`, because a client has to negotiate first. Use an MCP client library:
+
+```python
+import httpx2
+from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
+
+token = open("/home/you/.config/amazon-nl-mcp/auth_token").read().strip()
+http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"})
+async with http, Client(streamable_http_client("http://127.0.0.1:8765/mcp", http_client=http)) as c:
+    results = await c.call_tool("amazon_search_products", {"query": "usb c kabel"})
 ```
 
 **From a container on the same box**, `127.0.0.1` is the container's own loopback and can never
@@ -200,7 +210,7 @@ The ones that matter most:
 ```bash
 uv sync
 uv run playwright install chromium
-uv run pytest              # 136 tests, no network, no amazon.nl
+uv run pytest              # 140 tests, no network, no amazon.nl
 uv run ruff check src tests && uv run ruff format --check src tests
 uv run mypy src tests
 ```

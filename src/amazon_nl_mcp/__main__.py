@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import secrets
 import sys
+import threading
 
 import uvicorn
 
@@ -114,11 +115,11 @@ async def _login(settings: Settings, *, timeout_s: float) -> int:
         async with session.page(rate_limited=False) as page:
             await page.goto(settings.base_url, wait_until="domcontentloaded")
             print(LOGIN_BANNER, flush=True)
-            loop = asyncio.get_running_loop()
-            try:
-                await asyncio.wait_for(loop.run_in_executor(None, sys.stdin.readline), timeout=timeout_s)
-            except TimeoutError:
-                print(f"Timed out after {timeout_s / 60:.0f} minutes without confirmation.", file=sys.stderr)
+            if not await _wait_for_enter(timeout_s):
+                print(
+                    f"Timed out after {timeout_s / 60:.0f} minutes without confirmation. Nothing was saved.",
+                    file=sys.stderr,
+                )
                 return 1
             signed_in = await client.is_signed_in(page)
     finally:
@@ -134,6 +135,40 @@ async def _login(settings: Settings, *, timeout_s: float) -> int:
         file=sys.stderr,
     )
     return 1
+
+
+async def _wait_for_enter(timeout_s: float) -> bool:
+    """Block until the operator presses ENTER, or the timeout expires.
+
+    Read through the event loop rather than a worker thread: a thread parked on
+    ``stdin.readline()`` cannot be cancelled, so a timed-out login would hang the
+    process at exit instead of reporting the timeout. Falls back to a daemon
+    thread where stdin cannot be watched (a pipe on some platforms).
+    """
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[bool] = loop.create_future()
+    try:
+        loop.add_reader(sys.stdin.fileno(), lambda: _resolve(done, True))
+    except (NotImplementedError, OSError, ValueError):
+        threading.Thread(target=_resolve_threadsafe, args=(loop, done), daemon=True).start()
+    try:
+        return await asyncio.wait_for(asyncio.shield(done), timeout=timeout_s)
+    except TimeoutError:
+        return False
+    finally:
+        with contextlib.suppress(NotImplementedError, OSError, ValueError):
+            loop.remove_reader(sys.stdin.fileno())
+
+
+def _resolve(future: asyncio.Future[bool], value: bool) -> None:
+    sys.stdin.readline()
+    if not future.done():
+        future.set_result(value)
+
+
+def _resolve_threadsafe(loop: asyncio.AbstractEventLoop, future: asyncio.Future[bool]) -> None:
+    sys.stdin.readline()
+    loop.call_soon_threadsafe(lambda: None if future.done() else future.set_result(True))
 
 
 def cmd_login(args: argparse.Namespace) -> int:

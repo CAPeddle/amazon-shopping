@@ -153,6 +153,15 @@ services:
 **2. A socket proxy on the bridge.** The service itself stays on loopback; only a tiny,
 auditable proxy is exposed.
 
+The proxy forwards the request verbatim, `Host: 172.17.0.1:8765` included, and MCP's
+DNS-rebinding protection checks that header — so this route still needs the address in the
+allowlist, even though the app is bound to loopback:
+
+```ini
+# ~/.config/amazon-nl-mcp/env
+AMAZON_MCP_ALLOWED_HOSTS=172.17.0.1:8765,host.docker.internal:8765
+```
+
 ```bash
 install -Dm644 deploy/amazon-nl-mcp-bridge.socket  ~/.config/systemd/user/amazon-nl-mcp-bridge.socket
 install -Dm644 deploy/amazon-nl-mcp-bridge.service ~/.config/systemd/user/amazon-nl-mcp-bridge.service

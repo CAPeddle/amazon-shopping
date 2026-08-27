@@ -12,7 +12,9 @@
 [Unit]
 Description=amazon.nl MCP server (holds a logged-in Chromium profile)
 Documentation=https://github.com/CAPeddle/amazon-shopping
-After=default.target network-online.target
+# network-online.target is not a thing in a user manager; ordering against it
+# is silently ignored. The service tolerates a late network anyway.
+After=default.target
 # A crash loop must not wedge the unit permanently on a personal machine.
 StartLimitIntervalSec=300
 StartLimitBurst=10
@@ -27,9 +29,13 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONFAULTHANDLER=1
 Environment=PLAYWRIGHT_BROWSERS_PATH=%h/.cache/ms-playwright
 Environment=AMAZON_MCP_LOG_FORMAT=json
+# Pinned so the unit does not depend on $XDG_STATE_HOME resolving the same way
+# the CLI resolves the default. Both land on ~/.local/state/amazon-nl-mcp/profile,
+# which is what makes `amazon-nl-mcp login` seed the profile this service uses.
 Environment=AMAZON_MCP_PROFILE_DIR=%S/amazon-nl-mcp/profile
 # Non-secret tunables. The bearer token deliberately does NOT live here — see
 # LoadCredential below; anything in Environment= is printed by `systemctl show`.
+# config.py reads this same file when you run the CLI by hand.
 EnvironmentFile=-%h/.config/amazon-nl-mcp/env
 
 # %S resolves to ~/.local/state for a user unit; recreated at this mode on every start.

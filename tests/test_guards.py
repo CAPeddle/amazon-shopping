@@ -6,12 +6,14 @@ Pure logic — no browser, no network.
 from __future__ import annotations
 
 import logging
+import os
+import socket
 from pathlib import Path
 
 import pytest
 import structlog
 
-from amazon_nl_mcp.browser import CircuitBreaker, RateLimiter
+from amazon_nl_mcp.browser import CircuitBreaker, RateLimiter, _clear_stale_singleton_locks
 from amazon_nl_mcp.config import Settings
 from amazon_nl_mcp.errors import BotWallError, RateLimitedError
 from amazon_nl_mcp.logging import _redact, configure_logging
@@ -139,3 +141,30 @@ class TestRedaction:
             # captures output would otherwise inherit this configuration.
             structlog.configure(**original)
             logging.basicConfig(force=True)
+
+
+class TestSingletonLocks:
+    def test_a_live_holder_keeps_its_lock(self, tmp_path: Path) -> None:
+        """Deleting a live lock would let two Chromiums share one profile and corrupt it."""
+        lock = tmp_path / "SingletonLock"
+        lock.symlink_to(f"{socket.gethostname()}-{os.getpid()}")
+        _clear_stale_singleton_locks(tmp_path)
+        assert lock.is_symlink()
+
+    def test_a_dead_holders_lock_is_cleared(self, tmp_path: Path) -> None:
+        lock = tmp_path / "SingletonLock"
+        lock.symlink_to(f"{socket.gethostname()}-4294967")  # above PID_MAX, cannot exist
+        _clear_stale_singleton_locks(tmp_path)
+        assert not lock.is_symlink()
+
+    def test_a_lock_from_another_host_is_left_alone(self, tmp_path: Path) -> None:
+        lock = tmp_path / "SingletonLock"
+        lock.symlink_to("some-other-host-1")
+        _clear_stale_singleton_locks(tmp_path)
+        assert lock.is_symlink()
+
+    def test_an_unparseable_lock_is_left_alone(self, tmp_path: Path) -> None:
+        lock = tmp_path / "SingletonLock"
+        lock.symlink_to("nonsense")
+        _clear_stale_singleton_locks(tmp_path)
+        assert lock.is_symlink()

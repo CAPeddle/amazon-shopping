@@ -328,8 +328,10 @@ async def extract_cart_line(line: Locator, base_url: str) -> CartLine | None:
 
     quantity = await _cart_line_quantity(line)
     price = parse_price(await first_text(line, S.CART_LINE_PRICE))
+    # Computed for every quantity, single units included: a caller summing this
+    # column must get the cart total, not the total minus its one-off lines.
     line_total: Money | None = None
-    if price is not None and price.amount is not None and quantity > 1:
+    if price is not None and price.amount is not None:
         line_total = Money(
             amount=round(price.amount * quantity, 2),
             currency=price.currency,

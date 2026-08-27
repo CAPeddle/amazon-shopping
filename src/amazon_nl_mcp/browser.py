@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import socket
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -263,16 +265,50 @@ class BrowserSession:
 
 
 def _clear_stale_singleton_locks(profile: Path) -> None:
-    """Remove Chromium's singleton locks left behind by an unclean shutdown.
+    """Remove Chromium's singleton locks, but only when they are actually stale.
 
-    They are symlinks to ``<host>-<pid>``; a live Chromium on this profile would
-    have failed the launch anyway, and a stale one blocks every future start.
+    ``SingletonLock`` is a symlink to ``<host>-<pid>``. Removing one whose PID is
+    still alive would let a second Chromium open the same profile, and two
+    Chromiums on one profile corrupt the cookie database — which here means
+    losing the login. So the PID is checked first, and a lock we cannot prove is
+    dead is left alone: a failed launch with a clear error beats a corrupted
+    profile.
     """
     for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
         candidate = profile / name
-        if candidate.is_symlink() or candidate.exists():
-            with contextlib.suppress(OSError):
-                candidate.unlink()
+        if not (candidate.is_symlink() or candidate.exists()):
+            continue
+        if _lock_holder_is_alive(candidate):
+            log.warning("singleton_lock_held", lock=name)
+            continue
+        with contextlib.suppress(OSError):
+            candidate.unlink()
+
+
+def _lock_holder_is_alive(lock: Path) -> bool:
+    """Whether the process named in a singleton lock is still running.
+
+    The link target is ``<hostname>-<pid>``. A lock from another host, or one we
+    cannot parse, counts as alive: not deleting it is the safe mistake.
+    """
+    try:
+        target = str(lock.readlink())
+    except OSError:
+        return False  # not a symlink at all: nothing holds it
+    _, _, pid_part = target.rpartition("-")
+    if not pid_part.isdigit():
+        return True
+    if target[: -len(pid_part) - 1] not in {socket.gethostname(), ""}:
+        return True
+    try:
+        os.kill(int(pid_part), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # alive, owned by someone else
+    except OSError:
+        return True
+    return True
 
 
 #: Papers over the two headless tells that cost nothing to fix. This is not an
