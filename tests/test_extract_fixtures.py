@@ -125,7 +125,20 @@ class TestCart:
 
         ugreen = by_asin["B07LEGACY1"]
         assert ugreen.quantity == 1, "select[name=quantity]"
-        assert ugreen.line_total is None, "no line total is computed for a single unit"
+        assert ugreen.line_total is not None, "single units carry a line total too, so sums add up"
+        assert ugreen.line_total.amount == pytest.approx(8.49)
+
+    async def test_line_totals_sum_to_the_subtotal(self, fixture_page: PageLoader) -> None:
+        page = await fixture_page("cart.html")
+        lines = await X.extract_cart_lines(page, BASE)
+        subtotal = X.parse_price(await X.first_text(page, S.CART_SUBTOTAL))
+        assert subtotal is not None
+        summed = sum(
+            line.line_total.amount
+            for line in lines
+            if line.line_total is not None and line.line_total.amount is not None
+        )
+        assert summed == pytest.approx(subtotal.amount)
 
     async def test_subtotal_and_count(self, fixture_page: PageLoader) -> None:
         page = await fixture_page("cart.html")

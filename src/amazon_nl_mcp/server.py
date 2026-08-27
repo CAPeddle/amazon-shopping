@@ -19,9 +19,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from amazon_nl_mcp.amazon.client import AmazonClient
+from amazon_nl_mcp.amazon.client import MAX_ROWS_PER_PAGE, MAX_SEARCH_PAGE, AmazonClient
 from amazon_nl_mcp.config import Settings
-from amazon_nl_mcp.errors import AmazonMCPError, WritesDisabledError
+from amazon_nl_mcp.errors import AmazonMCPError
 from amazon_nl_mcp.logging import get_logger
 from amazon_nl_mcp.models import (
     AddToCartResult,
@@ -92,9 +92,27 @@ def create_mcp_server(client: AmazonClient, settings: Settings) -> MCPServer:
                 max_length=200,
             ),
         ],
-        limit: Annotated[int, Field(description="Maximum products to return.", ge=1, le=50)] = 10,
+        limit: Annotated[
+            int,
+            Field(
+                description=(
+                    "Maximum products to return from this page. If the result comes back with "
+                    "truncated=true, raise this to see the rest of the page — going to next_page "
+                    "would skip them."
+                ),
+                ge=1,
+                le=MAX_ROWS_PER_PAGE,
+            ),
+        ] = 10,
         page: Annotated[
-            int, Field(description="1-based results page. Use next_page from a previous call.", ge=1, le=20)
+            int,
+            Field(
+                description=(
+                    "1-based results page. Only ever pass a next_page value a previous call returned."
+                ),
+                ge=1,
+                le=MAX_SEARCH_PAGE,
+            ),
         ] = 1,
         include_sponsored: Annotated[
             bool,
@@ -107,6 +125,11 @@ def create_mcp_server(client: AmazonClient, settings: Settings) -> MCPServer:
         ASIN is what amazon_get_product and amazon_add_to_cart take. Sponsored
         rows are filtered out unless asked for. Results are amazon.nl's own
         ranking for the query, not a re-ranking.
+
+        Reading the pagination fields: `truncated` means this page held more
+        matches than `limit` allowed through — raise `limit` to see them.
+        `next_page` is only ever set when you have seen the current page out, so
+        following it never skips anything.
         """
         return await _guard(  # type: ignore[return-value]
             client.search_products(query, limit=limit, page_number=page, include_sponsored=include_sponsored),
@@ -127,15 +150,20 @@ def create_mcp_server(client: AmazonClient, settings: Settings) -> MCPServer:
         in sizes or colours — the child ASINs to choose between. A listing whose
         requires_variant_selection is true cannot be added directly; add one of
         its variants instead.
+
+        Check `resolved_from`: amazon.nl sometimes redirects an ASIN to another
+        product, and when it does, the returned `asin` is the one that was
+        actually loaded — not the one you asked for.
         """
         return await _guard(client.get_product(asin), tool="amazon_get_product")  # type: ignore[return-value]
 
-    @mcp.tool(
+    write_tool = mcp.tool(
         title="Add to the amazon.nl cart",
         annotations=ToolAnnotations(
             read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
         ),
     )
+
     async def amazon_add_to_cart(
         asin: Annotated[str, _ASIN_FIELD],
         quantity: Annotated[
@@ -151,9 +179,12 @@ def create_mcp_server(client: AmazonClient, settings: Settings) -> MCPServer:
 
         Calling twice adds twice. Check amazon_view_cart first if you are unsure
         whether an earlier call landed.
+
+        `ok` is true only when the whole requested quantity landed; a partial add
+        returns false with `added_quantity` showing what did. Check
+        `resolved_from` too — a non-null value means amazon.nl redirected the
+        ASIN you asked for to the one that was added.
         """
-        if not settings.write_enabled:
-            raise ToolError(WritesDisabledError().as_text())
         return await _guard(  # type: ignore[return-value]
             client.add_to_cart(asin, quantity=quantity), tool="amazon_add_to_cart"
         )
@@ -194,12 +225,17 @@ def create_mcp_server(client: AmazonClient, settings: Settings) -> MCPServer:
         """
         return await client.session_status(reveal_account=reveal_account)
 
+    # A read-only deployment does not advertise a tool it would always refuse:
+    # a tool the model cannot see is clearer than one that always errors, and it
+    # keeps the surface honest about what this instance can do.
+    if settings.write_enabled:
+        write_tool(amazon_add_to_cart)
+
     # Referenced so linters see the decorated functions as used; the decorator
     # is what actually registers them with the server.
     _ = (
         amazon_search_products,
         amazon_get_product,
-        amazon_add_to_cart,
         amazon_view_cart,
         amazon_session_status,
     )

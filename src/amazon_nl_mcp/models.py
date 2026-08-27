@@ -73,7 +73,15 @@ class ProductVariant(BaseModel):
 class ProductDetail(BaseModel):
     """Return type of ``amazon_get_product``."""
 
-    asin: str = Field(description="The product's ASIN.")
+    asin: str = Field(description="The ASIN this page actually describes, and the one to add.")
+    resolved_from: str | None = Field(
+        default=None,
+        description=(
+            "Set when amazon.nl redirected the requested ASIN to this one — a variation parent "
+            "resolving to its default child, or a discontinued listing to its replacement. "
+            "None when the page is the ASIN that was asked for."
+        ),
+    )
     title: str = Field(description="Product title.")
     url: str = Field(description="Canonical amazon.nl product URL.")
     price: Money | None = Field(default=None, description="Buy-box price, when one is shown.")
@@ -100,7 +108,13 @@ class CartLine(BaseModel):
     title: str = Field(description="Product title as shown in the cart.")
     quantity: int = Field(description="Quantity currently in the cart for this line.")
     price: Money | None = Field(default=None, description="Unit price as shown.")
-    line_total: Money | None = Field(default=None, description="Price times quantity, when shown.")
+    line_total: Money | None = Field(
+        default=None,
+        description=(
+            "Unit price times quantity. Present whenever the unit price is readable, including "
+            "for single units, so summing this column totals the cart."
+        ),
+    )
     availability: str | None = Field(default=None, description="Any stock note on the line.")
     url: str | None = Field(default=None, description="Product URL for the line item.")
 
@@ -118,10 +132,19 @@ class Cart(BaseModel):
 class AddToCartResult(BaseModel):
     """Return type of ``amazon_add_to_cart``."""
 
-    ok: bool = Field(description="Whether the item was verified present in the cart afterwards.")
-    asin: str = Field(description="ASIN that was added.")
+    ok: bool = Field(
+        description=(
+            "True only when the full requested quantity was verified present in the cart. "
+            "A partial add returns False with added_quantity showing what did land."
+        )
+    )
+    asin: str = Field(description="ASIN that was added — check resolved_from before assuming it is yours.")
+    resolved_from: str | None = Field(
+        default=None, description="The ASIN that was requested, when amazon.nl redirected to another."
+    )
     title: str | None = Field(default=None, description="Title of the added product, when known.")
     requested_quantity: int = Field(description="Quantity that was requested.")
+    added_quantity: int = Field(description="Units this call actually put in the cart.")
     quantity_in_cart: int = Field(description="Quantity of this ASIN in the cart after the add.")
     price: Money | None = Field(default=None, description="Unit price at the time of adding.")
     cart_item_count: int = Field(description="Total units in the cart after the add.")

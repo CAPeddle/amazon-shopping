@@ -53,6 +53,13 @@ log = get_logger(__name__)
 #: Amazon's quantity dropdown tops out here; larger orders need the cart page.
 MAX_PDP_QUANTITY = 30
 
+#: Rows read from one search page. Also the ceiling on `limit`, so that "raise
+#: limit to see the rest of this page" is always advice a caller can take.
+MAX_ROWS_PER_PAGE = 60
+
+#: Deepest results page worth offering; Amazon's own relevance is long gone by here.
+MAX_SEARCH_PAGE = 20
+
 WaitState = Literal["commit", "domcontentloaded", "load", "networkidle"]
 
 
@@ -283,7 +290,7 @@ class AmazonClient:
             # Read the whole page, then truncate: that is the only way to know
             # whether `limit` hid anything, and to filter ads without the filter
             # eating into the caller's budget.
-            found = await X.extract_search_rows(page, self.base_url, 60)
+            found = await X.extract_search_rows(page, self.base_url, MAX_ROWS_PER_PAGE)
             if not include_sponsored:
                 found = [p for p in found if not p.is_sponsored]
             products = found[:limit]
@@ -306,9 +313,15 @@ class AmazonClient:
                 page=page_number,
                 has_more=has_more,
                 truncated=truncated,
-                # Advertised only when the caller has actually seen this page
-                # out; otherwise "next page" would mean "skip what limit hid".
-                next_page=page_number + 1 if (more_pages and not truncated) else None,
+                # Advertised only when the caller has seen this page out and
+                # there is a page to advertise; otherwise "next page" would mean
+                # "skip whatever limit hid". `limit` reaches MAX_ROWS_PER_PAGE,
+                # so raising it is always a way out of a truncated page.
+                next_page=(
+                    page_number + 1
+                    if (more_pages and not truncated and page_number < MAX_SEARCH_PAGE)
+                    else None
+                ),
                 results_url=url,
                 products=products,
             )
@@ -340,9 +353,10 @@ class AmazonClient:
 
         # /dp/<child> can silently resolve to a variation parent; the hidden
         # input says which ASIN the buy box actually belongs to.
+        requested = asin.upper()
         resolved = (await X.first_attr(page, S.PDP_ASIN_INPUT, "value") or "").strip().upper()
-        if X.is_valid_asin(resolved) and resolved != asin.upper():
-            log.info("asin_redirected", requested=asin.upper(), resolved=resolved)
+        if X.is_valid_asin(resolved) and resolved != requested:
+            log.info("asin_redirected", requested=requested, resolved=resolved)
             asin = resolved
 
         availability = await X.first_text(page, S.PDP_AVAILABILITY)
@@ -353,6 +367,7 @@ class AmazonClient:
         bullets = await self._read_bullets(page)
         return ProductDetail(
             asin=asin.upper(),
+            resolved_from=requested if asin.upper() != requested else None,
             title=title,
             url=self.product_url(asin.upper()),
             price=X.parse_price(await X.first_text(page, S.PDP_PRICE_DISPLAY)),
@@ -481,6 +496,7 @@ class AmazonClient:
 
             self._mark_success()
             added = in_cart - baseline
+            complete = added >= quantity
             message = (
                 f"Added {added}x {detail.title!r} to the amazon.nl cart via {mechanism} "
                 f"({in_cart} of this item now in the cart, {cart.item_count} items total). "
@@ -488,14 +504,17 @@ class AmazonClient:
             )
             if substituted:
                 message = (f"amazon.nl resolved {requested} to {asin} and that is what was added. ") + message
-            if wanted < quantity:
-                message += f" Only {wanted} could be added at once; call again for the rest."
+
             log.info("added_to_cart", asin=asin, requested=quantity, in_cart=in_cart, mechanism=mechanism)
+            if not complete:
+                message += f" Only {added} of the {quantity} requested landed; call again for the rest."
             return AddToCartResult(
-                ok=True,
+                ok=complete,
                 asin=asin,
+                resolved_from=requested if substituted else None,
                 title=detail.title,
                 requested_quantity=quantity,
+                added_quantity=added,
                 quantity_in_cart=in_cart,
                 price=detail.price,
                 cart_item_count=cart.item_count,
