@@ -214,3 +214,31 @@ class TestSessionStatus:
         assert status.state == "unreachable"
         assert status.signed_in is False
         assert "connectivity" in status.detail
+
+
+class TestDoubleAddSafety:
+    async def test_a_stale_cart_read_does_not_cause_a_second_add(
+        self, amazon_client: AmazonClient, fake_amazon: FakeAmazon
+    ) -> None:
+        """The cart is briefly stale after an add; that must not trigger the fallback.
+
+        Treating the first stale read as failure would send the product-page
+        mechanism at an item that is already in the cart, adding it twice.
+        """
+        real_fixture_for = fake_amazon._fixture_for
+        stale_reads = {"remaining": 1}
+
+        def fixture_for(url: str) -> str | None:
+            if "/gp/cart/view.html" in url and fake_amazon.add_hits and stale_reads["remaining"]:
+                stale_reads["remaining"] -= 1
+                return fake_amazon.cart_before  # the pre-add cart, served once too often
+            return real_fixture_for(url)
+
+        fake_amazon._fixture_for = fixture_for  # type: ignore[method-assign]
+
+        result = await amazon_client.add_to_cart("B0CX23V2ZK", quantity=2)
+
+        assert result.ok is True
+        assert result.quantity_in_cart == 2
+        assert fake_amazon.add_hits == 1, "the add endpoint must not be hit twice"
+        assert "add_url" in result.message, "the fallback must not have been used"

@@ -64,6 +64,11 @@ class _StatusBase(TypedDict):
     write_enabled: bool
 
 
+def _quantity_of(asin: str, cart: Cart) -> int:
+    """Units of one ASIN in a cart, summed across duplicate lines."""
+    return sum(line.quantity for line in cart.lines if (line.asin or "").upper() == asin.upper())
+
+
 class AmazonClient:
     """High-level operations on the signed-in amazon.nl storefront."""
 
@@ -416,21 +421,20 @@ class AmazonClient:
             # The buy box may belong to a different ASIN than the one asked for.
             asin = detail.asin
 
-            before = await self._cart_quantities(page)
-            baseline = before.get(asin, 0)
+            baseline = _quantity_of(asin, await self._read_cart(page))
 
             mechanism = "add_url"
             await self._goto(page, self.add_to_cart_url(asin, wanted))
             await self._check_variant_interstitial(page, asin, detail)
-            after = await self._cart_quantities(page)
+            cart = await self._read_cart_settled(page, asin, baseline)
 
-            if after.get(asin, 0) <= baseline:
+            if _quantity_of(asin, cart) <= baseline:
                 log.info("add_url_ineffective_falling_back", asin=asin)
                 mechanism = "pdp_click"
                 await self._add_via_product_page(page, asin, wanted)
-                after = await self._cart_quantities(page)
+                cart = await self._read_cart_settled(page, asin, baseline)
 
-            in_cart = after.get(asin, 0)
+            in_cart = _quantity_of(asin, cart)
             if in_cart <= baseline:
                 raise CartVerificationError(
                     f"Neither add mechanism put {asin} in the cart.",
@@ -441,7 +445,6 @@ class AmazonClient:
                     ),
                 )
 
-            cart = await self._read_cart(page)
             self._mark_success()
             added = in_cart - baseline
             message = (
@@ -463,6 +466,21 @@ class AmazonClient:
                 cart_url=self.cart_url,
                 message=message,
             )
+
+    async def _read_cart_settled(self, page: Page, asin: str, baseline: int) -> Cart:
+        """Re-read the cart until it reflects the add, or until we give up.
+
+        Amazon's cart is briefly stale straight after an add. Treating the first
+        stale read as failure would send the fallback mechanism at a product
+        that is already in the cart — and add it twice.
+        """
+        cart = await self._read_cart(page)
+        for attempt in range(2):
+            if _quantity_of(asin, cart) > baseline:
+                return cart
+            await asyncio.sleep(1.0 + attempt)
+            cart = await self._read_cart(page)
+        return cart
 
     async def _check_variant_interstitial(self, page: Page, asin: str, detail: ProductDetail) -> None:
         """The add endpoint answers a variation parent with a 'Kies een optie' page."""
@@ -522,23 +540,3 @@ class AmazonClient:
                     return
             except PlaywrightError:
                 continue
-
-    async def _cart_quantities(self, page: Page) -> dict[str, int]:
-        """ASIN -> quantity, read off the cart page.
-
-        Retries once: the cart is briefly stale straight after an add, and one
-        empty read on a cart that should not be empty is not evidence of failure.
-        """
-        for attempt in range(2):
-            await self._goto(page, self.cart_url)
-            await self._require_signed_in(page)
-            lines = await X.extract_cart_lines(page, self.base_url)
-            if lines or attempt == 1:
-                quantities: dict[str, int] = {}
-                for line in lines:
-                    key = (line.asin or "").upper()
-                    if key:
-                        quantities[key] = quantities.get(key, 0) + line.quantity
-                return quantities
-            await asyncio.sleep(1.0)
-        return {}
