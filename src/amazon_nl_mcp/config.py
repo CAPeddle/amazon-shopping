@@ -129,6 +129,14 @@ class Settings(BaseSettings):
         default=True, description="Allow cart mutations. Set false for a read-only deployment."
     )
 
+    status_timeout_s: float = Field(
+        default=45.0,
+        gt=0,
+        description=(
+            "Ceiling on amazon_session_status. It is the tool you reach for when everything else "
+            "is failing, so it degrades to a 'unknown' answer rather than hanging."
+        ),
+    )
     readiness_ttl_s: float = Field(
         default=30.0,
         ge=0,

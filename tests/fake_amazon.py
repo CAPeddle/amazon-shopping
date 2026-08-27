@@ -129,6 +129,8 @@ class StubBrowserSession:
 
     @asynccontextmanager
     async def page(self, *, rate_limited: bool = True) -> AsyncIterator[Page]:
+        # Same ordering as BrowserSession.page: guards inside the exclusion, not
+        # before it. There is no lock here because the suite is single-threaded.
         self.breaker.raise_if_open()
         if rate_limited:
             self.rate_limiter.check()

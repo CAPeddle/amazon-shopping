@@ -44,8 +44,20 @@ class SearchResults(BaseModel):
     query: str = Field(description="The query that was searched.")
     count: int = Field(description="Number of products in this response.")
     page: int = Field(description="1-based results page that was read.")
-    has_more: bool = Field(description="Whether a further results page exists.")
-    next_page: int | None = Field(default=None, description="Page number to pass in to continue.")
+    has_more: bool = Field(
+        description="Whether more results exist, either further down this page or on the next one."
+    )
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "True when this page held more matches than `limit` allowed through. Raise `limit` to "
+            "see the rest of THIS page — going to next_page would skip them."
+        ),
+    )
+    next_page: int | None = Field(
+        default=None,
+        description=("The next amazon.nl results page, or None when this one was truncated or was the last."),
+    )
     results_url: str = Field(description="The search URL that produced these rows.")
     products: list[ProductSummary] = Field(description="The matching products, in Amazon's own order.")
 

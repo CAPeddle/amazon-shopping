@@ -165,8 +165,13 @@ class BrowserSession:
                 ),
                 timeout=self._settings.browser_launch_timeout_s,
             )
-        except (TimeoutError, PlaywrightError, OSError) as exc:
+        except BaseException as exc:
+            # Includes CancelledError: a launch cancelled by a tool timeout must
+            # still stop the driver it started, or the next launch overwrites the
+            # reference and leaks the process.
             await self._teardown_locked()
+            if not isinstance(exc, TimeoutError | PlaywrightError | OSError):
+                raise
             raise BrowserUnavailableError(
                 f"Could not start Chromium against {profile}: {exc}",
                 hint=(
@@ -212,11 +217,15 @@ class BrowserSession:
         A page per call rather than one reused page: it costs a few hundred
         milliseconds and removes a whole class of stale-DOM bugs between tools.
         """
-        self.breaker.raise_if_open()
-        if rate_limited:
-            self.rate_limiter.check()
-
         async with self._lock:
+            # Both guards are checked *after* the lock, not before it. Checked
+            # before, a burst of calls would all pass while the first one was
+            # still running, and the ones queued behind a call that hits a bot
+            # wall would proceed straight into the wall the breaker just closed.
+            self.breaker.raise_if_open()
+            if rate_limited:
+                self.rate_limiter.check()
+
             if self._context is None:
                 await self._launch_locked()
             assert self._context is not None

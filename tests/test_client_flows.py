@@ -6,6 +6,8 @@ handling, bot-wall screening, extraction, and the add-to-cart verification.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from amazon_nl_mcp.amazon.client import AmazonClient
@@ -242,3 +244,54 @@ class TestDoubleAddSafety:
         assert result.quantity_in_cart == 2
         assert fake_amazon.add_hits == 1, "the add endpoint must not be hit twice"
         assert "add_url" in result.message, "the fallback must not have been used"
+
+
+class TestPaginationContract:
+    async def test_a_truncated_page_does_not_advertise_a_next_page(self, amazon_client: AmazonClient) -> None:
+        """next_page must never mean "skip what limit hid"."""
+        results = await amazon_client.search_products("usb c kabel", limit=1)
+        assert results.count == 1
+        assert results.truncated is True
+        assert results.has_more is True
+        assert results.next_page is None
+
+    async def test_an_exhausted_page_advertises_the_next_one(self, amazon_client: AmazonClient) -> None:
+        results = await amazon_client.search_products("usb c kabel", limit=50)
+        assert results.truncated is False
+        assert results.has_more is True
+        assert results.next_page == 2
+
+    async def test_no_results_advertises_nothing(
+        self, amazon_client: AmazonClient, fake_amazon: FakeAmazon
+    ) -> None:
+        fake_amazon.route(r"/s\?", "search_no_results.html")
+        results = await amazon_client.search_products("qwertyuiopasdfgh")
+        assert results.has_more is False
+        assert results.next_page is None
+        assert results.truncated is False
+
+
+class TestAsinSubstitution:
+    async def test_a_resolved_asin_is_reported_not_swapped_silently(
+        self, amazon_client: AmazonClient, fake_amazon: FakeAmazon
+    ) -> None:
+        """A /dp/ URL can resolve to a different ASIN; the caller must be told."""
+        fake_amazon.route(r"/dp/B0CHILD042", "product_detail.html")  # input#ASIN says B0CX23V2ZK
+        result = await amazon_client.add_to_cart("B0CHILD042")
+        assert result.asin == "B0CX23V2ZK"
+        assert "B0CHILD042" in result.message
+        assert "resolved" in result.message
+
+
+class TestSessionStatusTimeout:
+    async def test_a_hung_probe_degrades_instead_of_hanging(
+        self, amazon_client: AmazonClient, fake_amazon: FakeAmazon
+    ) -> None:
+        async def never_answer(route: object) -> None:
+            await asyncio.sleep(30)
+
+        fake_amazon.handle = never_answer  # type: ignore[method-assign]
+        amazon_client._settings = amazon_client._settings.model_copy(update={"status_timeout_s": 1.0})
+        status = await amazon_client.session_status()
+        assert status.state == "unknown"
+        assert "longer than" in status.detail

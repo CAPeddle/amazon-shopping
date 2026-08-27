@@ -220,24 +220,19 @@ class AmazonClient:
                 **base,
             )
         try:
-            async with self._browser.page(rate_limited=False) as page:
-                await self._goto(page, self.base_url)
-                signed_in = await self.is_signed_in(page)
-                greeting = await X.first_text(page, S.NAV_ACCOUNT_GREETING)
-                count = await self._cart_count(page)
-                self._mark_success()
-                return SessionStatus(
-                    state="authenticated" if signed_in else "signed_out",
-                    signed_in=signed_in,
-                    account_label=greeting if (signed_in and reveal_account) else None,
-                    cart_item_count=count,
-                    detail=(
-                        "Signed in; search and cart tools are available."
-                        if signed_in
-                        else "Signed out. Run `amazon-nl-mcp login` on the host to sign in interactively."
-                    ),
-                    **base,
-                )
+            async with asyncio.timeout(self._settings.status_timeout_s):
+                return await self._probe_session(reveal_account=reveal_account, base=base)
+        except TimeoutError:
+            return SessionStatus(
+                state="unknown",
+                signed_in=False,
+                detail=(
+                    f"Checking the session took longer than {self._settings.status_timeout_s:.0f}s. "
+                    "amazon.nl may be slow or the browser may be wedged; "
+                    "`systemctl --user restart amazon-nl-mcp` if it persists."
+                ),
+                **base,
+            )
         except BotWallError as exc:
             return SessionStatus(state="blocked", signed_in=False, detail=exc.as_text(), **base)
         except NetworkError as exc:
@@ -246,6 +241,29 @@ class AmazonClient:
             return SessionStatus(state="browser_down", signed_in=False, detail=exc.as_text(), **base)
         except AmazonMCPError as exc:
             return SessionStatus(state="unknown", signed_in=False, detail=exc.as_text(), **base)
+
+    async def _probe_session(self, *, reveal_account: bool, base: _StatusBase) -> SessionStatus:
+        """The page work behind :meth:`session_status`, without the error mapping."""
+        # Deliberately not rate limited: diagnosing a service that is refusing
+        # work must not itself be refused for the same reason.
+        async with self._browser.page(rate_limited=False) as page:
+            await self._goto(page, self.base_url)
+            signed_in = await self.is_signed_in(page)
+            greeting = await X.first_text(page, S.NAV_ACCOUNT_GREETING)
+            count = await self._cart_count(page)
+            self._mark_success()
+            return SessionStatus(
+                state="authenticated" if signed_in else "signed_out",
+                signed_in=signed_in,
+                account_label=greeting if (signed_in and reveal_account) else None,
+                cart_item_count=count,
+                detail=(
+                    "Signed in; search and cart tools are available."
+                    if signed_in
+                    else "Signed out. Run `amazon-nl-mcp login` on the host to sign in interactively."
+                ),
+                **base,
+            )
 
     async def search_products(
         self,
@@ -262,17 +280,22 @@ class AmazonClient:
             await self._goto(page, url)
             # Over-fetch when filtering ads out, so a page of sponsored rows
             # still yields a full page of organic results.
-            fetch = limit if include_sponsored else min(limit * 3, 60)
-            products = await X.extract_search_rows(page, self.base_url, fetch)
+            # Read the whole page, then truncate: that is the only way to know
+            # whether `limit` hid anything, and to filter ads without the filter
+            # eating into the caller's budget.
+            found = await X.extract_search_rows(page, self.base_url, 60)
             if not include_sponsored:
-                products = [p for p in products if not p.is_sponsored]
-            products = products[:limit]
+                found = [p for p in found if not p.is_sponsored]
+            products = found[:limit]
+            truncated = len(found) > limit
 
-            has_more = await X.exists(page, S.SEARCH_NEXT_PAGE)
+            more_pages = await X.exists(page, S.SEARCH_NEXT_PAGE)
+            has_more = truncated or more_pages
             if not products:
                 text = await X.page_text_lower(page, limit=4_000)
                 if any(marker in text for marker in S.NO_RESULTS_MARKERS):
                     has_more = False
+                    more_pages = False
                 elif not await self.is_signed_in(page):
                     raise NotLoggedInError()
             self._mark_success()
@@ -282,7 +305,10 @@ class AmazonClient:
                 count=len(products),
                 page=page_number,
                 has_more=has_more,
-                next_page=page_number + 1 if has_more else None,
+                truncated=truncated,
+                # Advertised only when the caller has actually seen this page
+                # out; otherwise "next page" would mean "skip what limit hid".
+                next_page=page_number + 1 if (more_pages and not truncated) else None,
                 results_url=url,
                 products=products,
             )
@@ -422,8 +448,12 @@ class AmazonClient:
                     + (f" — availability reads {detail.availability!r}." if detail.availability else "."),
                     hint="Check amazon_get_product for variants, or pick another listing.",
                 )
-            # The buy box may belong to a different ASIN than the one asked for.
-            asin = detail.asin
+            # The buy box may belong to a different ASIN than the one asked for
+            # (a variation parent resolving to its default child, a discontinued
+            # listing redirecting to its replacement). Follow it — that is what a
+            # person clicking the same link would get — but never silently.
+            requested, asin = asin, detail.asin
+            substituted = requested != asin
 
             baseline = _quantity_of(asin, await self._read_cart(page))
 
@@ -456,6 +486,8 @@ class AmazonClient:
                 f"({in_cart} of this item now in the cart, {cart.item_count} items total). "
                 f"Review and check out yourself at {self.cart_url} — this service never places orders."
             )
+            if substituted:
+                message = (f"amazon.nl resolved {requested} to {asin} and that is what was added. ") + message
             if wanted < quantity:
                 message += f" Only {wanted} could be added at once; call again for the rest."
             log.info("added_to_cart", asin=asin, requested=quantity, in_cart=in_cart, mechanism=mechanism)

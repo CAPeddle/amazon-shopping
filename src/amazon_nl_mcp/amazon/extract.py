@@ -265,6 +265,9 @@ async def extract_variants(page: Page) -> list[ProductVariant]:
     """Read the twister (size/colour/pack) children of a parent listing."""
     variants: list[ProductVariant] = []
     seen: set[str] = set()
+    # Every candidate selector, not just the first that matches: a listing that
+    # varies on two axes (size *and* colour) puts each axis under its own
+    # container, and stopping early would drop all but one of them.
     for selector in S.PDP_VARIANT_ITEMS:
         items = page.locator(selector)
         count = await items.count()
