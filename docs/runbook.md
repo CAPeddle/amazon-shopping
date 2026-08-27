@@ -65,9 +65,9 @@ rate limit real work does.
 
 ---
 
-## The four failure states
+## The failure states
 
-`amazon_session_status` (and `amazon-nl-mcp doctor`) collapses everything into one of four:
+`amazon_session_status` (and `amazon-nl-mcp doctor`) collapses everything into one of these:
 
 **`signed_out`** — the stored session expired, or Amazon invalidated it.
 Run `amazon-nl-mcp login` again. If it keeps expiring in days rather than months, the
@@ -87,6 +87,9 @@ itself. If it keeps happening:
 check the journal. The common causes are a missing browser build after a `playwright` upgrade
 (`uv run playwright install chromium`) and a stale singleton lock (the unit's `ExecStartPre`
 clears those, but only for the profile path it knows about).
+
+**`unreachable`** — amazon.nl could not be reached at all: no DNS, no route, or an outbound proxy
+in the way. Nothing to do with Amazon or the login; check the box's own connectivity.
 
 **`unknown`** — the page loaded but looked like nothing the selector table recognises. Almost
 always an Amazon layout change: see below.

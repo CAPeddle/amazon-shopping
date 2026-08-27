@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SessionState = Literal["authenticated", "signed_out", "unknown", "blocked", "browser_down"]
+SessionState = Literal["authenticated", "signed_out", "blocked", "unreachable", "browser_down", "unknown"]
 
 
 class Money(BaseModel):
@@ -123,7 +123,8 @@ class SessionStatus(BaseModel):
     state: SessionState = Field(
         description=(
             "'authenticated' = signed in and usable; 'signed_out' = re-login needed; "
-            "'blocked' = Amazon is serving an automation check; 'browser_down' = Chromium is not running; "
+            "'blocked' = Amazon is serving an automation check; 'unreachable' = amazon.nl could "
+            "not be reached from this host; 'browser_down' = Chromium is not running; "
             "'unknown' = could not be determined."
         )
     )

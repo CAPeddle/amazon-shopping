@@ -12,6 +12,7 @@ from amazon_nl_mcp.amazon.client import AmazonClient
 from amazon_nl_mcp.errors import (
     BotWallError,
     CartVerificationError,
+    NetworkError,
     NotLoggedInError,
     ProductNotFoundError,
     ProductUnavailableError,
@@ -192,8 +193,24 @@ class TestSessionStatus:
         assert status.state == "signed_out"
         assert "login" in status.detail
 
+    async def test_a_network_failure_raises_the_right_error_from_a_tool(
+        self, amazon_client: AmazonClient, fake_amazon: FakeAmazon
+    ) -> None:
+        fake_amazon.offline = True
+        with pytest.raises(NetworkError):
+            await amazon_client.search_products("usb c kabel")
+
     async def test_blocked_never_raises(self, amazon_client: AmazonClient, fake_amazon: FakeAmazon) -> None:
         fake_amazon.route(r"amazon\.nl/?$", "bot_wall.html")
         status = await amazon_client.session_status()
         assert status.state == "blocked"
         assert status.signed_in is False
+
+    async def test_a_network_failure_is_not_reported_as_a_dead_browser(
+        self, amazon_client: AmazonClient, fake_amazon: FakeAmazon
+    ) -> None:
+        fake_amazon.offline = True
+        status = await amazon_client.session_status()
+        assert status.state == "unreachable"
+        assert status.signed_in is False
+        assert "connectivity" in status.detail

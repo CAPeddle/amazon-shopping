@@ -47,6 +47,8 @@ class FakeAmazon:
     add_response: str = "add_confirmation.html"
     #: When False the add endpoint is a no-op, so the cart never changes.
     add_succeeds: bool = True
+    #: When True every navigation fails at the transport, as if the box were offline.
+    offline: bool = False
 
     requests: list[str] = field(default_factory=list)
     add_hits: int = 0
@@ -68,6 +70,9 @@ class FakeAmazon:
 
     async def handle(self, route: Route) -> None:
         request = route.request
+        if self.offline:
+            await route.abort("connectionfailed")
+            return
         if request.resource_type != "document":
             # Images, CSS and Amazon's own beacons: never fetched, never needed.
             await route.abort()

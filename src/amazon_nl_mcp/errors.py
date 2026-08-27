@@ -103,6 +103,12 @@ class CartVerificationError(AmazonMCPError):
     code = "cart_not_updated"
 
 
+class NetworkError(AmazonMCPError):
+    """amazon.nl could not be reached: DNS, an outbound proxy, or the box being offline."""
+
+    code = "unreachable"
+
+
 class BrowserUnavailableError(AmazonMCPError):
     """Chromium could not be started or crashed and could not be recovered."""
 

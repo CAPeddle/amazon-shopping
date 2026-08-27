@@ -150,6 +150,7 @@ When something fails, `amazon_session_status` tells you which of the four failur
 | `authenticated` | working | — |
 | `signed_out` | the stored session expired | `uv run amazon-nl-mcp login` |
 | `blocked` | Amazon served an automation check | wait out the cooldown; if it persists, clear it by hand in `login` |
+| `unreachable` | amazon.nl could not be reached from this host | check the box's own connectivity |
 | `browser_down` | Chromium is not running | `systemctl --user restart amazon-nl-mcp` |
 
 ## Configuration

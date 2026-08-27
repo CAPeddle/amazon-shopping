@@ -30,7 +30,9 @@ from amazon_nl_mcp.config import Settings
 from amazon_nl_mcp.errors import (
     AmazonMCPError,
     BotWallError,
+    BrowserUnavailableError,
     CartVerificationError,
+    NetworkError,
     NotLoggedInError,
     PageTimeoutError,
     ProductNotFoundError,
@@ -110,7 +112,13 @@ class AmazonClient:
                 hint="Retry; if it keeps timing out, the browser profile may need a fresh login.",
             ) from exc
         except PlaywrightError as exc:
-            raise AmazonMCPError(f"Navigation to amazon.nl failed: {exc}") from exc
+            # Playwright appends a multi-line call log; only the first line says
+            # anything the caller can act on.
+            reason = str(exc).splitlines()[0]
+            raise NetworkError(
+                f"Could not reach amazon.nl: {reason}",
+                hint="Check this host's connectivity and any outbound proxy, then retry.",
+            ) from exc
 
         await self._dismiss_consent(page)
         await self._raise_if_blocked(page)
@@ -223,8 +231,12 @@ class AmazonClient:
                 )
         except BotWallError as exc:
             return SessionStatus(state="blocked", signed_in=False, detail=exc.as_text(), **base)
-        except AmazonMCPError as exc:
+        except NetworkError as exc:
+            return SessionStatus(state="unreachable", signed_in=False, detail=exc.as_text(), **base)
+        except BrowserUnavailableError as exc:
             return SessionStatus(state="browser_down", signed_in=False, detail=exc.as_text(), **base)
+        except AmazonMCPError as exc:
+            return SessionStatus(state="unknown", signed_in=False, detail=exc.as_text(), **base)
 
     async def search_products(
         self,
