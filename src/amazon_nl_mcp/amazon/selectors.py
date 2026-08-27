@@ -52,7 +52,7 @@ CONTINUE_SHOPPING: Final[list[str]] = [
     "button:has-text('Verder winkelen')",
     "button:has-text('Continue shopping')",
     "input[type='submit'][value='Verder winkelen']",
-    "alt[type='submit']",
+    "input[type='submit'][value='Continue shopping']",
 ]
 
 DELIVERY_LOCATION_DISMISS: Final[list[str]] = [

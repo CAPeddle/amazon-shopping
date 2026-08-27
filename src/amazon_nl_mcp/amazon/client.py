@@ -125,14 +125,18 @@ class AmazonClient:
                 hint="Check this host's connectivity and any outbound proxy, then retry.",
             ) from exc
 
-        await self._dismiss_consent(page)
+        # Screen for the automation check *before* clicking anything: a captcha
+        # page has a submit button too, and submitting an empty one is worse
+        # than useless.
         await self._raise_if_blocked(page)
+        await self._dismiss_consent(page)
 
     async def _dismiss_consent(self, page: Page) -> None:
-        """Click away the cookie banner and the delivery-location popover.
+        """Click away the cookie banner and the soft "continue shopping" wall.
 
-        Both are one-time per profile in practice, but they steal clicks from
-        the add-to-cart button when they are up, so this runs on every page.
+        Both are one-time per profile in practice, but while they are up they
+        steal clicks from the add-to-cart button, so this runs on every page.
+        Only reached once :meth:`_raise_if_blocked` has cleared the page.
         """
         for candidates in (S.COOKIE_ACCEPT, S.CONTINUE_SHOPPING):
             for selector in candidates:
