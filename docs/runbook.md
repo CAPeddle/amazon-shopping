@@ -5,33 +5,66 @@ mean, and the failures you will actually hit.
 
 ---
 
-## Signing in on a headless box
+## Signing in
 
 `amazon-nl-mcp login` opens a real browser window, because you have to type a password and
-probably a one-time code into it. On a box with no display, give it one and look at it over an
-SSH tunnel:
+probably a one-time code into it. Where that window appears depends on what the box has.
+
+### The box has a desktop session (the common case)
+
+If the machine runs a graphical session — even one nobody is sitting at — the window can go on
+the display it already has. Over SSH:
+
+```bash
+cd ~/amazon-shopping
+DISPLAY=:0 uv run amazon-nl-mcp login
+```
+
+The window opens on the machine's own screen. To *see* it from elsewhere, either use whatever
+remote desktop you already reach the box with, or forward X to the machine you are sitting at:
+
+```bash
+ssh -X you@the-box                        # or `ssh -Y` if -X is refused
+cd ~/amazon-shopping && uv run amazon-nl-mcp login
+```
+
+With `ssh -X` the browser renders on *your* screen and `DISPLAY` is already set for you. Chrome
+over forwarded X11 is sluggish, which does not matter for a one-off sign-in.
+
+Check what the box actually has before choosing:
+
+```bash
+ls /tmp/.X11-unix/                        # X0 => a session on :0
+loginctl list-sessions                    # Type=x11/wayland => graphical
+echo "$XDG_SESSION_TYPE"                  # from inside a session
+```
+
+On Wayland, `DISPLAY=:0` still works through Xwayland. If it does not, use `ssh -X`.
+
+### The box has no display at all
+
+Give it one and look at it over an SSH tunnel:
 
 ```bash
 sudo apt-get install -y xvfb x11vnc
 
 Xvfb :99 -screen 0 1600x1000x24 &
-x11vnc -display :99 -localhost -rfbport 5900 -nopw -forever -shared &
+x11vnc -display :99 -localhost -rfbport 5900 -nopw -forever &
 
 # from your laptop:
 ssh -N -L 5900:localhost:5900 you@the-box
 # then point any VNC client at localhost:5900
 ```
 
-Then, on the box:
-
 ```bash
 cd ~/amazon-shopping
 DISPLAY=:99 uv run amazon-nl-mcp login
 ```
 
-`x11vnc -localhost` binds loopback only, so the VNC port is reachable through the SSH tunnel and
-nothing else. Kill both processes when you are done — you only need them again when the session
-expires.
+`x11vnc -localhost` binds loopback only, so the VNC port is reachable through the tunnel and
+nothing else. Kill both processes when you are done.
+
+### Whichever route you took
 
 Three things decide whether the login sticks:
 
@@ -42,6 +75,46 @@ Three things decide whether the login sticks:
    `SingletonLock` that blocks the next start.
 3. **Confirm the nav reads `Hallo, <your name>`** before you walk away. The command checks this
    too and exits non-zero if it does not.
+
+---
+
+## Running the browser headful
+
+Headless Chromium is one of the loudest signals Amazon has: it renders differently, reports no
+GPU, and skips work a real compositor does. If the box has a display, you can spend it and take
+that signal away.
+
+```ini
+# ~/.config/amazon-nl-mcp/env
+AMAZON_MCP_HEADLESS=false
+AMAZON_MCP_BROWSER_CHANNEL=chrome     # real Google Chrome, not the bundled build
+```
+
+and uncomment the two display lines in the unit, so the service worker can reach the session:
+
+```ini
+# ~/.config/systemd/user/amazon-nl-mcp.service
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+```
+
+```bash
+uv run playwright install chrome      # only if you set BROWSER_CHANNEL
+systemctl --user daemon-reload && systemctl --user restart amazon-nl-mcp
+```
+
+What you are trading:
+
+- The service now **depends on a graphical session existing**. Reboot to a display manager with
+  nobody logged in and the browser cannot start; `/readyz` reports `browser_down` and stays there
+  until someone logs in. Headless has no such dependency. Enable autologin if you want headful
+  without that fragility.
+- A browser window exists on the desktop. It is not in your way unless you are sitting there,
+  but it is visible to anyone who is.
+- Slightly more memory, and a real GPU process.
+
+This does not make the traffic undetectable — the profile is still a dedicated one and Playwright
+still drives it over CDP. It removes the single cheapest tell, for a config change.
 
 ---
 
@@ -130,6 +203,55 @@ Symptoms: searches return zero products on a query that obviously has results, p
 
 Scrub the captured HTML before committing it: a signed-in page carries your name in the nav and
 your address in the delivery block.
+
+---
+
+## Reaching it from your laptop over Tailscale
+
+If you reach the box on a tailnet, that is the right boundary to serve on: the address only
+exists inside your tailnet, Tailscale ACLs gate who can route to it, and the bearer token is the
+second lock rather than the only one.
+
+```bash
+tailscale ip -4                           # e.g. 100.101.102.103
+tailscale status --json | jq -r '.Self.DNSName'   # e.g. the-box.tailnet-1234.ts.net.
+```
+
+```ini
+# ~/.config/amazon-nl-mcp/env
+AMAZON_MCP_HOST=100.101.102.103
+AMAZON_MCP_ALLOWED_HOSTS=100.101.102.103:8765,the-box.tailnet-1234.ts.net:8765
+```
+
+The allowlist is not optional. MCP's DNS-rebinding protection checks the `Host` header and knows
+only about loopback by default, so a client dialling the MagicDNS name gets a bare
+`421 Misdirected Request` until that name is listed. List both the IP and the DNS name — clients
+differ in which they send.
+
+Then from your laptop:
+
+```bash
+claude mcp add --transport http amazon-nl http://the-box.tailnet-1234.ts.net:8765/mcp \
+  --header "Authorization: Bearer $TOKEN"
+```
+
+Two things to get right:
+
+- **Bind the tailnet address, not `0.0.0.0`.** Binding the Tailscale IP puts the listener on that
+  interface alone. `0.0.0.0` also publishes it to whatever LAN the box is on, where nothing gates
+  it but the token.
+- **`tailscale serve`, never `tailscale funnel`.** `serve` puts it behind HTTPS with a real
+  certificate for clients that insist on TLS, still tailnet-only:
+
+  ```bash
+  tailscale serve --bg --https=443 http://127.0.0.1:8765
+  ```
+
+  `funnel` is the same command aimed at the public internet. Do not point it at a service holding
+  a logged-in Amazon session.
+
+With `serve` the app stays on `127.0.0.1` and Tailscale terminates TLS, so the Host header becomes
+the MagicDNS name — list it in `AMAZON_MCP_ALLOWED_HOSTS` exactly as above.
 
 ---
 

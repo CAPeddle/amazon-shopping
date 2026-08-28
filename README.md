@@ -66,8 +66,9 @@ Tick *"Blijf ingelogd"* when you sign in — that checkbox is what makes the ses
 instead of days. Complete any 2FA, confirm the nav reads `Hallo, <your name>`, then press ENTER
 in the terminal. Don't `kill -9` it: Chromium flushes its cookie store on a clean close.
 
-On a headless box the login window needs somewhere to appear — see
-[docs/runbook.md](docs/runbook.md#signing-in-on-a-headless-box) for the Xvfb + VNC recipe.
+If the box has a desktop session, `DISPLAY=:0 uv run amazon-nl-mcp login` puts the window on its
+own screen, and `ssh -X` puts it on yours. Genuinely headless boxes need Xvfb + VNC — both routes
+are in [docs/runbook.md](docs/runbook.md#signing-in).
 
 Finally:
 
@@ -203,6 +204,7 @@ The ones that matter most:
 | `AMAZON_MCP_RATE_LIMIT_PER_MINUTE` | `20` | Lower is safer. Raising it is the quickest route to a CAPTCHA. |
 | `AMAZON_MCP_WRITE_ENABLED` | `true` | Set `false` for a search-only deployment. |
 | `AMAZON_MCP_BROWSER_CHANNEL` | *(bundled Chromium)* | `chrome` uses the real Google Chrome, which is flagged slightly less often. |
+| `AMAZON_MCP_HEADLESS` | `true` | `false` on a box with a display removes the loudest bot signal, at the cost of needing a graphical session. See the runbook. |
 | `AMAZON_MCP_AUTH_DISABLED` | `false` | Only ever with `AMAZON_MCP_HOST=127.0.0.1`; `serve` refuses the combination otherwise. |
 
 ## Development
@@ -210,7 +212,7 @@ The ones that matter most:
 ```bash
 uv sync
 uv run playwright install chromium
-uv run pytest              # 142 tests, no network, no amazon.nl
+uv run pytest              # 146 tests, no network, no amazon.nl
 uv run ruff check src tests && uv run ruff format --check src tests
 uv run mypy src tests
 ```

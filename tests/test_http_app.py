@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
-from amazon_nl_mcp.app import build_app
+from amazon_nl_mcp.app import _transport_security, build_app
 from amazon_nl_mcp.config import Settings
 
 # Must be an allowed Host: MCP's DNS-rebinding protection rejects "testserver".
@@ -141,3 +141,31 @@ async def test_tools_are_reachable_over_the_real_streamable_http_transport(
         names = {tool.name for tool in (await client.list_tools()).tools}
     assert "amazon_search_products" in names
     assert "amazon_add_to_cart" in names
+
+
+class TestTransportSecurityAllowlist:
+    """MCP's DNS-rebinding check 421s anything not on this list, so it has to be right."""
+
+    def test_loopback_is_always_allowed(self, settings: Settings) -> None:
+        hosts = _transport_security(settings).allowed_hosts
+        assert "127.0.0.1" in hosts
+        assert "localhost" in hosts
+
+    def test_the_bound_address_is_allowed_with_and_without_the_port(self) -> None:
+        bound = Settings(auth_token="0123456789abcdef0", host="100.101.102.103", port=8765)
+        hosts = _transport_security(bound).allowed_hosts
+        assert "100.101.102.103" in hosts
+        assert "100.101.102.103:8765" in hosts
+
+    def test_configured_names_reach_the_allowlist(self) -> None:
+        """A tailnet or docker-bridge client sends a Host the defaults do not cover."""
+        configured = Settings(
+            auth_token="0123456789abcdef0",
+            allowed_hosts=["the-box.tailnet-1234.ts.net:8765", "172.17.0.1:8765"],
+        )
+        hosts = _transport_security(configured).allowed_hosts
+        assert "the-box.tailnet-1234.ts.net:8765" in hosts
+        assert "172.17.0.1:8765" in hosts
+
+    def test_rebinding_protection_stays_on(self, settings: Settings) -> None:
+        assert _transport_security(settings).enable_dns_rebinding_protection is True

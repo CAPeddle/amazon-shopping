@@ -29,6 +29,11 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONFAULTHANDLER=1
 Environment=PLAYWRIGHT_BROWSERS_PATH=%h/.cache/ms-playwright
 Environment=AMAZON_MCP_LOG_FORMAT=json
+# Uncomment both to run the browser headful on the machine's own display, which
+# removes the loudest headless tell. Requires a graphical session to be logged
+# in — see "Running the browser headful" in docs/runbook.md for the trade.
+#Environment=DISPLAY=:0
+#Environment=XAUTHORITY=%h/.Xauthority
 # Pinned so the unit does not depend on $XDG_STATE_HOME resolving the same way
 # the CLI resolves the default. Both land on ~/.local/state/amazon-nl-mcp/profile,
 # which is what makes `amazon-nl-mcp login` seed the profile this service uses.
